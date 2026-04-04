@@ -1,0 +1,9 @@
+node_modules/
+client/node_modules/
+server/node_modules/
+server/oreos.db
+server/oreos.db-shm
+server/oreos.db-wal
+dist/
+.env
+*.local

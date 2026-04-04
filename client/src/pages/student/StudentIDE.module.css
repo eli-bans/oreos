@@ -1,0 +1,97 @@
+.page { display: flex; flex-direction: column; height: 100vh; background: var(--bg-base); overflow: hidden; user-select: none; }
+
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(13, 15, 20, 0.97);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.overlayCard {
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+  max-width: 360px;
+}
+.overlayIcon { font-size: 48px; }
+.overlayCard h2 { font-size: 22px; font-weight: 700; }
+.overlayCard p { color: var(--text-2); font-size: 14px; }
+
+.warning {
+  background: var(--red-dim);
+  border-bottom: 1px solid var(--red);
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+}
+.warning button {
+  background: transparent;
+  color: var(--red);
+  font-size: 12px;
+  border: 1px solid var(--red);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+.header {
+  display: flex; align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+  gap: 12px;
+}
+.headerLeft { display: flex; align-items: center; gap: 10px; }
+.logo { font-size: 16px; font-weight: 700; }
+.headerCenter { flex: 1; text-align: center; }
+.sessionName { font-size: 13px; color: var(--text-2); font-weight: 500; }
+.headerRight { display: flex; align-items: center; gap: 10px; }
+
+.monitorStats { display: flex; gap: 6px; }
+
+.langSelect {
+  width: auto;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--bg-raised);
+  border-color: var(--border);
+}
+
+.monitorBadge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--red);
+  background: var(--red-dim);
+  padding: 3px 8px;
+  border-radius: 999px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.waitingBanner {
+  background: var(--yellow-dim);
+  border-bottom: 1px solid var(--yellow);
+  color: var(--yellow);
+  font-size: 12px;
+  padding: 8px 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.editorWrap { flex: 1; overflow: hidden; }
+
+.footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  font-size: 11px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.constraints { font-size: 11px; }

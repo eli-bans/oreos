@@ -1,0 +1,47 @@
+.page { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg-base); }
+
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+.logo { font-size: 18px; font-weight: 700; }
+.headerRight { display: flex; align-items: center; gap: 14px; }
+.name { color: var(--text-2); font-size: 13px; }
+
+.main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 40px;
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+}
+
+.title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+.sub { color: var(--text-2); font-size: 13px; margin-bottom: 28px; }
+
+.form { display: flex; flex-direction: column; gap: 14px; }
+
+.codeInput {
+  text-align: center;
+  font-size: 28px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.2em;
+  padding: 16px;
+  color: var(--accent);
+}
+
+.error {
+  color: var(--red);
+  font-size: 13px;
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}

@@ -1,0 +1,83 @@
+.page { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg-base); }
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.headerLeft { display: flex; align-items: center; gap: 12px; }
+.logo { font-size: 18px; font-weight: 700; color: var(--text-1); }
+.role { font-size: 11px; font-weight: 600; background: var(--accent-dim); color: var(--accent); padding: 2px 8px; border-radius: 999px; }
+.headerRight { display: flex; align-items: center; gap: 14px; }
+.userName { color: var(--text-2); font-size: 13px; }
+
+.main { flex: 1; padding: 32px 28px; max-width: 1100px; width: 100%; margin: 0 auto; }
+
+.topBar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+.title { font-size: 22px; font-weight: 700; color: var(--text-1); }
+
+.createCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  margin-bottom: 28px;
+}
+
+.createTitle { font-size: 16px; font-weight: 600; margin-bottom: 20px; }
+
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field label { font-size: 12px; font-weight: 500; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.03em; }
+
+.constraintsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+
+.constraintItem { display: flex; flex-direction: column; gap: 6px; }
+.constraintItem label { font-size: 12px; font-weight: 500; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.03em; }
+
+.constraintToggle { display: flex; flex-direction: column; gap: 10px; justify-content: center; }
+.constraintToggle label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-1); cursor: pointer;
+}
+.constraintToggle input[type="checkbox"] { width: auto; accent-color: var(--accent); }
+
+.formActions { display: flex; justify-content: flex-end; gap: 10px; }
+
+.error {
+  color: var(--red);
+  font-size: 13px;
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.empty { text-align: center; padding: 80px 0; color: var(--text-2); }
+.emptyIcon { font-size: 40px; display: block; margin-bottom: 12px; }
+
+.sessionGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+
+.sessionCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sessionCard:hover { border-color: var(--accent); background: var(--bg-raised); }
+
+.sessionTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.sessionName { font-size: 15px; font-weight: 600; color: var(--text-1); }
+
+.sessionMeta { display: flex; align-items: center; justify-content: space-between; }
+.joinCode { font-size: 12px; color: var(--text-2); }
+.joinCode strong { color: var(--accent); font-family: 'JetBrains Mono', monospace; letter-spacing: 0.08em; }
+.sessionLang { font-size: 11px; background: var(--bg-hover); color: var(--text-2); padding: 2px 8px; border-radius: 4px; }
+.sessionDate { font-size: 12px; color: var(--text-3); }

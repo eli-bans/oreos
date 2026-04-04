@@ -1,0 +1,116 @@
+.loading { display: flex; align-items: center; justify-content: center; height: 100vh; color: var(--text-2); }
+
+.page { display: flex; flex-direction: column; height: 100vh; background: var(--bg-base); overflow: hidden; }
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+.headerCenter { display: flex; align-items: center; gap: 12px; flex: 1; }
+.sessionName { font-size: 16px; font-weight: 600; }
+.code { font-size: 12px; color: var(--text-2); margin-left: 4px; }
+.code strong { font-family: 'JetBrains Mono', monospace; color: var(--accent); letter-spacing: 0.08em; }
+.headerActions { display: flex; gap: 8px; }
+
+.body { display: flex; flex: 1; overflow: hidden; }
+
+.sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sideTabs { display: flex; border-bottom: 1px solid var(--border); }
+.sideTab {
+  flex: 1;
+  padding: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: all 0.15s;
+}
+.sideTab.sideTabActive { color: var(--accent); border-bottom-color: var(--accent); }
+.count { background: var(--bg-hover); color: var(--text-2); padding: 1px 6px; border-radius: 999px; font-size: 10px; }
+.flagCount { background: var(--red-dim); color: var(--red); }
+
+.studentList, .flagList { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.empty { color: var(--text-3); font-size: 12px; text-align: center; padding: 20px; }
+
+.studentItem {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.studentItem:hover { background: var(--bg-raised); }
+.studentItem.studentFocused { border-color: var(--accent); background: var(--accent-dim); }
+.studentTop { display: flex; align-items: center; gap: 7px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dotGreen { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dotGray  { background: var(--text-3); }
+.studentName { font-size: 13px; font-weight: 500; }
+.studentEmail { font-size: 11px; color: var(--text-3); padding-left: 14px; }
+.studentActions { padding-left: 14px; }
+
+.flagItem { padding: 10px 12px; border-radius: var(--radius); background: var(--bg-raised); display: flex; flex-direction: column; gap: 4px; }
+.flagTop { display: flex; align-items: center; gap: 8px; }
+.flagTime { font-size: 11px; color: var(--text-3); margin-left: auto; }
+.flagStudent { font-size: 12px; font-weight: 500; }
+.flagDetail { font-size: 11px; color: var(--text-2); }
+
+.main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+.liveView { display: flex; flex-direction: column; height: 100%; }
+.liveHeader { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-surface); flex-shrink: 0; }
+.liveTitle { font-size: 13px; font-weight: 600; }
+.liveLang { font-size: 11px; background: var(--bg-hover); padding: 2px 8px; border-radius: 4px; color: var(--text-2); }
+
+.grid { flex: 1; overflow-y: auto; padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; align-content: start; }
+
+.waitingState { grid-column: 1 / -1; text-align: center; padding: 80px 0; }
+.waitingText { color: var(--text-2); margin-bottom: 8px; }
+.waitingCode { font-size: 24px; font-weight: 700; color: var(--text-1); }
+.waitingCode strong { font-family: 'JetBrains Mono', monospace; color: var(--accent); letter-spacing: 0.15em; }
+
+.gridCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.gridCard:hover { border-color: var(--accent); }
+
+.gridHeader { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.gridName { font-size: 12px; font-weight: 600; }
+
+.miniCode {
+  height: 150px;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+.miniCode pre {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #d4d4d4;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
