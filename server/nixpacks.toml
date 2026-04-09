@@ -1,0 +1,7 @@
+# better-sqlite3 compiles via node-gyp; Nixpacks' Node image omits Python/build tools by default.
+[variables]
+NIXPACKS_NODE_VERSION = "20"
+
+[phases.setup]
+nixPkgs = ["...", "python311", "gcc", "gnumake"]
+aptPkgs = ["build-essential"]
