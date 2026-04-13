@@ -3,5 +3,5 @@
 NIXPACKS_NODE_VERSION = "20"
 
 [phases.setup]
-nixPkgs = ["...", "python311", "gcc", "gnumake"]
+nixPkgs = ["...", "python311", "gcc", "gnumake", "jdk"]
 aptPkgs = ["build-essential"]

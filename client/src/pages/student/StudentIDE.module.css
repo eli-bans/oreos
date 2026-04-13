@@ -85,6 +85,26 @@
 
 .editorWrap { flex: 1; overflow: hidden; }
 
+.compileResult {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.compileOk {
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+.compileError {
+  color: var(--red);
+  background: var(--red-dim);
+}
+
 .footer {
   display: flex; align-items: center; justify-content: space-between;
   padding: 5px 16px;

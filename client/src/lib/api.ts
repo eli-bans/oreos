@@ -49,6 +49,21 @@ export const api = {
 
   getFlags: (sessionId: string) =>
     request<Flag[]>(`/sessions/${sessionId}/flags`),
+
+  compileJava: (source: string) =>
+    request<{ ok: boolean; message?: string; error?: string; className?: string; output?: string }>('/compile/java', {
+      method: 'POST',
+      body: JSON.stringify({ source }),
+    }),
+
+  runJava: (source: string) =>
+    request<{ ok: boolean; message?: string; error?: string; className?: string; output?: string; compileOutput?: string }>(
+      '/compile/java/run',
+      {
+        method: 'POST',
+        body: JSON.stringify({ source }),
+      }
+    ),
 };
 
 export interface User {

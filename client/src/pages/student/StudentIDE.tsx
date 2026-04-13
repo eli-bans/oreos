@@ -25,6 +25,9 @@ export default function StudentIDE() {
   const [flagCount, setFlagCount] = useState(0);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [fullscreenWarning, setFullscreenWarning] = useState(false);
+  const [compileResult, setCompileResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [compiling, setCompiling] = useState(false);
+  const [running, setRunning] = useState(false);
 
   const codeRef = useRef('');
   const lastSentRef = useRef(0);
@@ -160,6 +163,48 @@ export default function StudentIDE() {
     return () => clearInterval(interval);
   }, [emitEvent, emitFlag]);
 
+  const handleCompileJava = useCallback(async () => {
+    if (language !== 'java' || compiling) return;
+    setCompiling(true);
+    setCompileResult(null);
+    try {
+      const result = await api.compileJava(codeRef.current);
+      const output = result.output?.trim();
+      setCompileResult({
+        ok: true,
+        text: output ? `Compilation successful\n\n${output}` : 'Compilation successful\n\n(no compiler output)',
+      });
+      emitEvent('compile_success', { language: 'java' });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Compilation failed';
+      setCompileResult({ ok: false, text: message });
+      emitFlag('compile_error', message.slice(0, 500));
+    } finally {
+      setCompiling(false);
+    }
+  }, [language, compiling, emitEvent, emitFlag]);
+
+  const handleRunJava = useCallback(async () => {
+    if (language !== 'java' || running) return;
+    setRunning(true);
+    setCompileResult(null);
+    try {
+      const result = await api.runJava(codeRef.current);
+      const output = result.output?.trim();
+      setCompileResult({
+        ok: true,
+        text: `Program executed successfully\n\n${output || '(no program output)'}`,
+      });
+      emitEvent('run_success', { language: 'java' });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Execution failed';
+      setCompileResult({ ok: false, text: message });
+      emitFlag('run_error', message.slice(0, 500));
+    } finally {
+      setRunning(false);
+    }
+  }, [language, running, emitEvent, emitFlag]);
+
   // ─── Prevent right-click ─────────────────────────────────────────────────────
   useEffect(() => {
     const block = (e: MouseEvent) => e.preventDefault();
@@ -233,6 +278,16 @@ export default function StudentIDE() {
             <option value="cpp">C++</option>
             <option value="c">C</option>
           </select>
+          {language === 'java' && (
+            <>
+              <button className="btn btn-ghost" onClick={handleCompileJava} disabled={compiling || running}>
+                {compiling ? 'Compiling...' : 'Compile Java'}
+              </button>
+              <button className="btn btn-primary" onClick={handleRunJava} disabled={running || compiling}>
+                {running ? 'Running...' : 'Run Java'}
+              </button>
+            </>
+          )}
           <span className={styles.monitorBadge}>🔴 Monitored</span>
         </div>
       </header>
@@ -262,6 +317,11 @@ export default function StudentIDE() {
           }}
         />
       </div>
+      {compileResult && (
+        <div className={`${styles.compileResult} ${compileResult.ok ? styles.compileOk : styles.compileError}`}>
+          {compileResult.text}
+        </div>
+      )}
 
       <footer className={styles.footer}>
         <span>📡 Connected</span>
