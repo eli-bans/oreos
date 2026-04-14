@@ -163,18 +163,23 @@ export default function StudentIDE() {
     return () => clearInterval(interval);
   }, [emitEvent, emitFlag]);
 
-  const handleCompileJava = useCallback(async () => {
-    if (language !== 'java' || compiling) return;
+  const handleCompile = useCallback(async () => {
+    if (!['java', 'python', 'cpp'].includes(language) || compiling) return;
     setCompiling(true);
     setCompileResult(null);
     try {
-      const result = await api.compileJava(codeRef.current);
+      const result =
+        language === 'java'
+          ? await api.compileJava(codeRef.current)
+          : language === 'python'
+            ? await api.compilePython(codeRef.current)
+            : await api.compileCpp(codeRef.current);
       const output = result.output?.trim();
       setCompileResult({
         ok: true,
         text: output ? `Compilation successful\n\n${output}` : 'Compilation successful\n\n(no compiler output)',
       });
-      emitEvent('compile_success', { language: 'java' });
+      emitEvent('compile_success', { language });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Compilation failed';
       setCompileResult({ ok: false, text: message });
@@ -184,18 +189,23 @@ export default function StudentIDE() {
     }
   }, [language, compiling, emitEvent, emitFlag]);
 
-  const handleRunJava = useCallback(async () => {
-    if (language !== 'java' || running) return;
+  const handleRun = useCallback(async () => {
+    if (!['java', 'python', 'cpp'].includes(language) || running) return;
     setRunning(true);
     setCompileResult(null);
     try {
-      const result = await api.runJava(codeRef.current);
+      const result =
+        language === 'java'
+          ? await api.runJava(codeRef.current)
+          : language === 'python'
+            ? await api.runPython(codeRef.current)
+            : await api.runCpp(codeRef.current);
       const output = result.output?.trim();
       setCompileResult({
         ok: true,
         text: `Program executed successfully\n\n${output || '(no program output)'}`,
       });
-      emitEvent('run_success', { language: 'java' });
+      emitEvent('run_success', { language });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Execution failed';
       setCompileResult({ ok: false, text: message });
@@ -278,14 +288,16 @@ export default function StudentIDE() {
             <option value="cpp">C++</option>
             <option value="c">C</option>
           </select>
-          {language === 'java' && (
+          {['java', 'python', 'cpp'].includes(language) && (
             <>
-              <button className="btn btn-ghost" onClick={handleCompileJava} disabled={compiling || running}>
-                {compiling ? 'Compiling...' : 'Compile Java'}
+              <button className="btn btn-ghost" onClick={handleCompile} disabled={compiling || running}>
+                {compiling ? 'Compiling...' : `Compile ${language === 'cpp' ? 'C++' : language[0].toUpperCase() + language.slice(1)}`}
               </button>
-              <button className="btn btn-primary" onClick={handleRunJava} disabled={running || compiling}>
-                {running ? 'Running...' : 'Run Java'}
-              </button>
+              {['java', 'python', 'cpp'].includes(language) && (
+                <button className="btn btn-primary" onClick={handleRun} disabled={running || compiling}>
+                  {running ? 'Running...' : `Run ${language === 'cpp' ? 'C++' : language[0].toUpperCase() + language.slice(1)}`}
+                </button>
+              )}
             </>
           )}
           <span className={styles.monitorBadge}>🔴 Monitored</span>

@@ -56,9 +56,39 @@ export const api = {
       body: JSON.stringify({ source }),
     }),
 
+  compilePython: (source: string) =>
+    request<{ ok: boolean; message?: string; error?: string; output?: string }>('/compile/python', {
+      method: 'POST',
+      body: JSON.stringify({ source }),
+    }),
+
+  compileCpp: (source: string) =>
+    request<{ ok: boolean; message?: string; error?: string; output?: string }>('/compile/cpp', {
+      method: 'POST',
+      body: JSON.stringify({ source }),
+    }),
+
   runJava: (source: string) =>
     request<{ ok: boolean; message?: string; error?: string; className?: string; output?: string; compileOutput?: string }>(
       '/compile/java/run',
+      {
+        method: 'POST',
+        body: JSON.stringify({ source }),
+      }
+    ),
+
+  runPython: (source: string) =>
+    request<{ ok: boolean; message?: string; error?: string; output?: string; compileOutput?: string }>(
+      '/compile/python/run',
+      {
+        method: 'POST',
+        body: JSON.stringify({ source }),
+      }
+    ),
+
+  runCpp: (source: string) =>
+    request<{ ok: boolean; message?: string; error?: string; output?: string; compileOutput?: string }>(
+      '/compile/cpp/run',
       {
         method: 'POST',
         body: JSON.stringify({ source }),
