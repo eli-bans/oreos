@@ -2,7 +2,7 @@ const router = require('express').Router();
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const { requireAuth } = require('../middleware/auth');
 
@@ -10,6 +10,57 @@ const execFileAsync = promisify(execFile);
 const COMPILE_TIMEOUT_MS = 10000;
 const RUN_TIMEOUT_MS = 5000;
 const MAX_BUFFER_BYTES = 1024 * 1024;
+
+function runWithInput(command, args, stdin = '') {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let finished = false;
+
+    const timer = setTimeout(() => {
+      if (finished) return;
+      child.kill('SIGKILL');
+      const err = new Error('Execution timed out');
+      err.output = 'Execution timed out';
+      reject(err);
+    }, RUN_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+      if (stdout.length + stderr.length > MAX_BUFFER_BYTES) {
+        child.kill('SIGKILL');
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      if (stdout.length + stderr.length > MAX_BUFFER_BYTES) {
+        child.kill('SIGKILL');
+      }
+    });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      finished = true;
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (finished) return;
+      finished = true;
+      const output = (stdout || stderr || '').trim();
+      if (code === 0) {
+        resolve({ stdout, stderr, output });
+      } else {
+        const err = new Error(output || 'Execution failed');
+        err.output = output || 'Execution failed';
+        reject(err);
+      }
+    });
+
+    child.stdin.write(String(stdin || ''));
+    child.stdin.end();
+  });
+}
 
 async function compileJavaSource(source) {
   const normalizedSource = String(source || '');
@@ -122,22 +173,20 @@ router.post('/java', requireAuth, async (req, res) => {
 
 router.post('/java/run', requireAuth, async (req, res) => {
   const source = String(req.body?.source || '');
+  const stdin = String(req.body?.stdin || '');
   if (!source.trim()) return res.status(400).json({ error: 'Java source code is required' });
 
   let tempDir = '';
   try {
     const compiled = await compileJavaSource(source);
     tempDir = compiled.tempDir;
-    const { stdout, stderr } = await execFileAsync('java', ['-cp', tempDir, compiled.className], {
-      timeout: RUN_TIMEOUT_MS,
-      maxBuffer: MAX_BUFFER_BYTES,
-    });
+    const { output } = await runWithInput('java', ['-cp', tempDir, compiled.className], stdin);
 
     return res.json({
       ok: true,
       message: 'Program executed successfully',
       className: compiled.className,
-      output: (stdout || stderr || '').trim(),
+      output,
       compileOutput: compiled.compileOutput,
     });
   } catch (error) {
@@ -200,6 +249,7 @@ router.post('/cpp', requireAuth, async (req, res) => {
 
 router.post('/python/run', requireAuth, async (req, res) => {
   const source = String(req.body?.source || '');
+  const stdin = String(req.body?.stdin || '');
   if (!source.trim()) return res.status(400).json({ error: 'Python source code is required' });
 
   let tempDir = '';
@@ -207,15 +257,12 @@ router.post('/python/run', requireAuth, async (req, res) => {
     const compiled = await compilePythonSource(source);
     tempDir = compiled.tempDir;
     const pyFile = path.join(tempDir, 'main.py');
-    const { stdout, stderr } = await execFileAsync('python3', [pyFile], {
-      timeout: RUN_TIMEOUT_MS,
-      maxBuffer: MAX_BUFFER_BYTES,
-    });
+    const { output } = await runWithInput('python3', [pyFile], stdin);
 
     return res.json({
       ok: true,
       message: 'Program executed successfully',
-      output: (stdout || stderr || '').trim(),
+      output,
       compileOutput: compiled.compileOutput,
     });
   } catch (error) {
@@ -234,21 +281,19 @@ router.post('/python/run', requireAuth, async (req, res) => {
 
 router.post('/cpp/run', requireAuth, async (req, res) => {
   const source = String(req.body?.source || '');
+  const stdin = String(req.body?.stdin || '');
   if (!source.trim()) return res.status(400).json({ error: 'C++ source code is required' });
 
   let tempDir = '';
   try {
     const compiled = await compileCppSource(source);
     tempDir = compiled.tempDir;
-    const { stdout, stderr } = await execFileAsync(compiled.binaryFile, [], {
-      timeout: RUN_TIMEOUT_MS,
-      maxBuffer: MAX_BUFFER_BYTES,
-    });
+    const { output } = await runWithInput(compiled.binaryFile, [], stdin);
 
     return res.json({
       ok: true,
       message: 'Program executed successfully',
-      output: (stdout || stderr || '').trim(),
+      output,
       compileOutput: compiled.compileOutput,
     });
   } catch (error) {

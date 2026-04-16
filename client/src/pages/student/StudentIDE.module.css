@@ -85,6 +85,36 @@
 
 .editorWrap { flex: 1; overflow: hidden; }
 
+.stdinWrap {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stdinLabel {
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.stdinInput {
+  width: 100%;
+  resize: vertical;
+  min-height: 72px;
+  max-height: 180px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  background: var(--bg-raised);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+
 .compileResult {
   flex-shrink: 0;
   padding: 8px 12px;

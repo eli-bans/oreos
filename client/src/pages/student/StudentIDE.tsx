@@ -9,6 +9,11 @@ import styles from './StudentIDE.module.css';
 
 type StatusKind = 'waiting' | 'active' | 'ended';
 
+function getCommentPrefix(lang: string) {
+  if (lang === 'python') return '#';
+  return '//';
+}
+
 export default function StudentIDE() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
@@ -28,9 +33,16 @@ export default function StudentIDE() {
   const [compileResult, setCompileResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [running, setRunning] = useState(false);
+  const [stdinText, setStdinText] = useState('');
 
   const codeRef = useRef('');
   const lastSentRef = useRef(0);
+  const constraintsRef = useRef<Constraints>({});
+  const starterCode = `${getCommentPrefix(language)} Session: ${session?.name ?? ''}\n${getCommentPrefix(language)} Good luck!\n\n`;
+
+  useEffect(() => {
+    constraintsRef.current = constraints;
+  }, [constraints]);
 
   // ─── Load session ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -104,6 +116,19 @@ export default function StudentIDE() {
     editor.onDidChangeCursorPosition((e) => {
       emitEvent('cursor', { line: e.position.lineNumber, col: e.position.column });
     });
+
+    // Block clipboard shortcuts inside Monaco when paste/copy is disallowed.
+    editor.onKeyDown((e) => {
+      const blocked = !constraintsRef.current.allowPaste;
+      if (!blocked) return;
+      const key = e.browserEvent.key.toLowerCase();
+      const mod = e.browserEvent.ctrlKey || e.browserEvent.metaKey;
+      if (mod && (key === 'v' || key === 'c' || key === 'x')) {
+        e.preventDefault();
+        e.stopPropagation();
+        emitFlag('clipboard_blocked', `Blocked shortcut: ${key.toUpperCase()}`);
+      }
+    });
   };
 
   // ─── Paste interception ──────────────────────────────────────────────────────
@@ -119,8 +144,20 @@ export default function StudentIDE() {
         setPasteCount(p => p + 1);
       }
     };
-    document.addEventListener('paste', handlePaste);
-    return () => document.removeEventListener('paste', handlePaste);
+    const handleCopyCut = (e: ClipboardEvent) => {
+      if (!constraints.allowPaste) {
+        e.preventDefault();
+        emitFlag('clipboard_blocked', `${e.type} blocked`);
+      }
+    };
+    document.addEventListener('paste', handlePaste, true);
+    document.addEventListener('copy', handleCopyCut, true);
+    document.addEventListener('cut', handleCopyCut, true);
+    return () => {
+      document.removeEventListener('paste', handlePaste, true);
+      document.removeEventListener('copy', handleCopyCut, true);
+      document.removeEventListener('cut', handleCopyCut, true);
+    };
   }, [constraints.allowPaste, emitEvent, emitFlag]);
 
   // ─── Tab / visibility monitoring ─────────────────────────────────────────────
@@ -196,10 +233,10 @@ export default function StudentIDE() {
     try {
       const result =
         language === 'java'
-          ? await api.runJava(codeRef.current)
+          ? await api.runJava(codeRef.current, stdinText)
           : language === 'python'
-            ? await api.runPython(codeRef.current)
-            : await api.runCpp(codeRef.current);
+            ? await api.runPython(codeRef.current, stdinText)
+            : await api.runCpp(codeRef.current, stdinText);
       const output = result.output?.trim();
       setCompileResult({
         ok: true,
@@ -213,7 +250,7 @@ export default function StudentIDE() {
     } finally {
       setRunning(false);
     }
-  }, [language, running, emitEvent, emitFlag]);
+  }, [language, running, stdinText, emitEvent, emitFlag]);
 
   // ─── Prevent right-click ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -314,7 +351,7 @@ export default function StudentIDE() {
         <Editor
           height="100%"
           language={language}
-          defaultValue={`// Session: ${session?.name ?? ''}\n// Good luck!\n\n`}
+          defaultValue={starterCode}
           theme="vs-dark"
           onMount={handleEditorMount}
           options={{
@@ -329,6 +366,18 @@ export default function StudentIDE() {
           }}
         />
       </div>
+      {['java', 'python', 'cpp'].includes(language) && (
+        <div className={styles.stdinWrap}>
+          <label className={styles.stdinLabel}>Program input (stdin)</label>
+          <textarea
+            value={stdinText}
+            onChange={(e) => setStdinText(e.target.value)}
+            placeholder={'Enter input lines here...\nExample:\n5\n1 2 3 4 5'}
+            className={styles.stdinInput}
+            rows={4}
+          />
+        </div>
+      )}
       {compileResult && (
         <div className={`${styles.compileResult} ${compileResult.ok ? styles.compileOk : styles.compileError}`}>
           {compileResult.text}
