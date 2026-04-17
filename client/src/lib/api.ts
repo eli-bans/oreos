@@ -1,7 +1,7 @@
 const BASE = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 
 function getToken() {
-  return localStorage.getItem('oreos_token');
+  try { return localStorage.getItem('oreos_token'); } catch { return null; }
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {

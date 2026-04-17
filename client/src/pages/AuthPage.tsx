@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
@@ -13,10 +13,13 @@ export default function AuthPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  if (user) {
-    navigate(user.role === 'lecturer' ? '/lecturer' : '/student', { replace: true });
-    return null;
-  }
+  useEffect(() => {
+    if (user) {
+      navigate(user.role === 'lecturer' ? '/lecturer' : '/student', { replace: true });
+    }
+  }, [user, navigate]);
+
+  if (user) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

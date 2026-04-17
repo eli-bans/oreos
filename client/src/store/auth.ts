@@ -21,13 +21,17 @@ function loadFromStorage(): { user: User | null; token: string | null } {
 export const useAuthStore = create<AuthState>((set) => ({
   ...loadFromStorage(),
   setAuth: (user, token) => {
-    localStorage.setItem('oreos_token', token);
-    localStorage.setItem('oreos_user', JSON.stringify(user));
+    try {
+      localStorage.setItem('oreos_token', token);
+      localStorage.setItem('oreos_user', JSON.stringify(user));
+    } catch { /* storage unavailable (private browsing, quota) */ }
     set({ user, token });
   },
   logout: () => {
-    localStorage.removeItem('oreos_token');
-    localStorage.removeItem('oreos_user');
+    try {
+      localStorage.removeItem('oreos_token');
+      localStorage.removeItem('oreos_user');
+    } catch { /* storage unavailable */ }
     set({ user: null, token: null });
   },
 }));
