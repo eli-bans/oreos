@@ -85,11 +85,57 @@
 
 .editorWrap { flex: 1; overflow: hidden; }
 
+.bottomPanel {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  max-height: 40vh;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  flex-shrink: 0;
+}
+
+.panelTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.panelClose {
+  background: transparent;
+  color: var(--text-3);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+.panelClose:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  flex: 1;
+}
+
 .stdinWrap {
   flex-shrink: 0;
   padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-surface);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -104,8 +150,8 @@
 .stdinInput {
   width: 100%;
   resize: vertical;
-  min-height: 72px;
-  max-height: 180px;
+  min-height: 56px;
+  max-height: 140px;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 12px;
   background: var(--bg-raised);
@@ -119,9 +165,10 @@
   flex-shrink: 0;
   padding: 8px 12px;
   font-size: 12px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   border-top: 1px solid var(--border);
   white-space: pre-wrap;
-  max-height: 120px;
+  max-height: 160px;
   overflow: auto;
 }
 

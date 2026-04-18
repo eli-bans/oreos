@@ -9,9 +9,48 @@ import styles from './StudentIDE.module.css';
 
 type StatusKind = 'waiting' | 'active' | 'ended';
 
-function getCommentPrefix(lang: string) {
-  if (lang === 'python') return '#';
-  return '//';
+function makeStarterComment(lang: string, sessionName: string): string {
+  switch (lang) {
+    case 'python':
+      return `# Session: ${sessionName}\n# Good luck!\n\n`;
+    case 'java':
+      return (
+        `/**\n` +
+        ` * Session: ${sessionName}\n` +
+        ` * Good luck!\n` +
+        ` */\n\n` +
+        `public class Main {\n` +
+        `    public static void main(String[] args) {\n` +
+        `        \n` +
+        `    }\n` +
+        `}\n`
+      );
+    case 'c':
+      return (
+        `/* Session: ${sessionName} */\n` +
+        `/* Good luck! */\n\n` +
+        `#include <stdio.h>\n\n` +
+        `int main() {\n` +
+        `    \n` +
+        `    return 0;\n` +
+        `}\n`
+      );
+    case 'cpp':
+      return (
+        `// Session: ${sessionName}\n` +
+        `// Good luck!\n\n` +
+        `#include <iostream>\n` +
+        `using namespace std;\n\n` +
+        `int main() {\n` +
+        `    \n` +
+        `    return 0;\n` +
+        `}\n`
+      );
+    case 'typescript':
+    case 'javascript':
+    default:
+      return `// Session: ${sessionName}\n// Good luck!\n\n`;
+  }
 }
 
 export default function StudentIDE() {
@@ -34,11 +73,12 @@ export default function StudentIDE() {
   const [compiling, setCompiling] = useState(false);
   const [running, setRunning] = useState(false);
   const [stdinText, setStdinText] = useState('');
+  const [showPanel, setShowPanel] = useState(false);
 
   const codeRef = useRef('');
   const lastSentRef = useRef(0);
   const constraintsRef = useRef<Constraints>({});
-  const starterCode = `${getCommentPrefix(language)} Session: ${session?.name ?? ''}\n${getCommentPrefix(language)} Good luck!\n\n`;
+  const starterInjected = useRef(false);
 
   useEffect(() => {
     constraintsRef.current = constraints;
@@ -51,7 +91,15 @@ export default function StudentIDE() {
       setSession(s);
       setStatus(s.status);
       setConstraints(s.constraints);
-      if (s.constraints.language) setLanguage(s.constraints.language);
+      const lang = s.constraints.language || 'javascript';
+      if (s.constraints.language) setLanguage(lang);
+
+      if (editorRef.current && !starterInjected.current) {
+        starterInjected.current = true;
+        const starter = makeStarterComment(lang, s.name);
+        editorRef.current.setValue(starter);
+        codeRef.current = starter;
+      }
     }).catch(() => navigate('/student'));
   }, [sessionId]);
 
@@ -101,6 +149,13 @@ export default function StudentIDE() {
   // ─── Monaco editor mount ─────────────────────────────────────────────────────
   const handleEditorMount: OnMount = (editor) => {
     editorRef.current = editor;
+
+    if (session && !starterInjected.current) {
+      starterInjected.current = true;
+      const starter = makeStarterComment(language, session.name);
+      editor.setValue(starter);
+      codeRef.current = starter;
+    }
 
     // Log every content change
     editor.onDidChangeModelContent((e) => {
@@ -202,6 +257,7 @@ export default function StudentIDE() {
 
   const handleCompile = useCallback(async () => {
     if (!['java', 'python', 'cpp'].includes(language) || compiling) return;
+    setShowPanel(true);
     setCompiling(true);
     setCompileResult(null);
     try {
@@ -228,6 +284,7 @@ export default function StudentIDE() {
 
   const handleRun = useCallback(async () => {
     if (!['java', 'python', 'cpp'].includes(language) || running) return;
+    setShowPanel(true);
     setRunning(true);
     setCompileResult(null);
     try {
@@ -351,7 +408,7 @@ export default function StudentIDE() {
         <Editor
           height="100%"
           language={language}
-          defaultValue={starterCode}
+          defaultValue=""
           theme="vs-dark"
           onMount={handleEditorMount}
           options={{
@@ -366,21 +423,29 @@ export default function StudentIDE() {
           }}
         />
       </div>
-      {['java', 'python', 'cpp'].includes(language) && (
-        <div className={styles.stdinWrap}>
-          <label className={styles.stdinLabel}>Program input (stdin)</label>
-          <textarea
-            value={stdinText}
-            onChange={(e) => setStdinText(e.target.value)}
-            placeholder={'Enter input lines here...\nExample:\n5\n1 2 3 4 5'}
-            className={styles.stdinInput}
-            rows={4}
-          />
-        </div>
-      )}
-      {compileResult && (
-        <div className={`${styles.compileResult} ${compileResult.ok ? styles.compileOk : styles.compileError}`}>
-          {compileResult.text}
+      {['java', 'python', 'cpp'].includes(language) && showPanel && (
+        <div className={styles.bottomPanel}>
+          <div className={styles.panelHeader}>
+            <span className={styles.panelTitle}>Terminal</span>
+            <button className={styles.panelClose} onClick={() => setShowPanel(false)}>&times;</button>
+          </div>
+          <div className={styles.panelBody}>
+            <div className={styles.stdinWrap}>
+              <label className={styles.stdinLabel}>Input (stdin)</label>
+              <textarea
+                value={stdinText}
+                onChange={(e) => setStdinText(e.target.value)}
+                placeholder={'Enter input lines here...\nExample:\n5\n1 2 3 4 5'}
+                className={styles.stdinInput}
+                rows={3}
+              />
+            </div>
+            {compileResult && (
+              <div className={`${styles.compileResult} ${compileResult.ok ? styles.compileOk : styles.compileError}`}>
+                {compileResult.text}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
