@@ -94,6 +94,12 @@ export default function LecturerSession() {
     socketRef.current.emit('lecturer:set_status', { sessionId: id, status });
   };
 
+  const updateLanguage = (lang: string) => {
+    const updated = { ...session!.constraints, language: lang };
+    socketRef.current.emit('lecturer:update_constraints', { sessionId: id, constraints: updated });
+    setSession(prev => prev ? { ...prev, constraints: updated } : prev);
+  };
+
   const focusedStudent = focused ? students.get(focused) : null;
   const studentList = Array.from(students.values());
 
@@ -109,6 +115,20 @@ export default function LecturerSession() {
           <span className={styles.code}>Join: <strong>{session.join_code}</strong></span>
         </div>
         <div className={styles.headerActions}>
+          {session.status !== 'ended' && (
+            <select
+              value={session.constraints.language ?? 'javascript'}
+              onChange={e => updateLanguage(e.target.value)}
+              className={styles.langSelect}
+            >
+              <option value="javascript">JavaScript</option>
+              <option value="python">Python</option>
+              <option value="typescript">TypeScript</option>
+              <option value="java">Java</option>
+              <option value="cpp">C++</option>
+              <option value="c">C</option>
+            </select>
+          )}
           {session.status === 'waiting' && <button className="btn btn-success" onClick={() => setStatus('active')}>▶ Start</button>}
           {session.status === 'active' && <button className="btn btn-danger" onClick={() => setStatus('ended')}>■ End session</button>}
         </div>

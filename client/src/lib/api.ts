@@ -104,8 +104,6 @@ export interface User {
 }
 
 export interface Constraints {
-  allowPaste?: boolean;
-  allowTabSwitch?: boolean;
   language?: string;
   timeLimit?: number; // seconds
 }

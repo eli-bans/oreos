@@ -10,7 +10,7 @@ export default function LecturerHome() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
-  const [constraints, setConstraints] = useState({ allowPaste: true, allowTabSwitch: false, language: 'javascript' });
+  const [constraints, setConstraints] = useState({ language: 'javascript' });
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -60,28 +60,16 @@ export default function LecturerHome() {
                 <label>Session name</label>
                 <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Midterm Exam — CS101" autoFocus />
               </div>
-              <div className={styles.constraintsGrid}>
-                <div className={styles.constraintItem}>
-                  <label>Language</label>
-                  <select value={constraints.language} onChange={e => setConstraints(c => ({ ...c, language: e.target.value }))}>
-                    <option value="javascript">JavaScript</option>
-                    <option value="python">Python</option>
-                    <option value="typescript">TypeScript</option>
-                    <option value="java">Java</option>
-                    <option value="cpp">C++</option>
-                    <option value="c">C</option>
-                  </select>
-                </div>
-                <div className={styles.constraintToggle}>
-                  <label>
-                    <input type="checkbox" checked={constraints.allowPaste} onChange={e => setConstraints(c => ({ ...c, allowPaste: e.target.checked }))} />
-                    Allow paste
-                  </label>
-                  <label>
-                    <input type="checkbox" checked={constraints.allowTabSwitch} onChange={e => setConstraints(c => ({ ...c, allowTabSwitch: e.target.checked }))} />
-                    Allow tab switching
-                  </label>
-                </div>
+              <div className={styles.field}>
+                <label>Language</label>
+                <select value={constraints.language} onChange={e => setConstraints(c => ({ ...c, language: e.target.value }))}>
+                  <option value="javascript">JavaScript</option>
+                  <option value="python">Python</option>
+                  <option value="typescript">TypeScript</option>
+                  <option value="java">Java</option>
+                  <option value="cpp">C++</option>
+                  <option value="c">C</option>
+                </select>
               </div>
               {error && <p className={styles.error}>{error}</p>}
               <div className={styles.formActions}>

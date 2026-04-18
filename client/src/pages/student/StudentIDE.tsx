@@ -77,12 +77,7 @@ export default function StudentIDE() {
 
   const codeRef = useRef('');
   const lastSentRef = useRef(0);
-  const constraintsRef = useRef<Constraints>({});
   const starterInjected = useRef(false);
-
-  useEffect(() => {
-    constraintsRef.current = constraints;
-  }, [constraints]);
 
   // ─── Load session ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -172,58 +167,36 @@ export default function StudentIDE() {
       emitEvent('cursor', { line: e.position.lineNumber, col: e.position.column });
     });
 
-    // Block clipboard shortcuts inside Monaco when paste/copy is disallowed.
     editor.onKeyDown((e) => {
-      const blocked = !constraintsRef.current.allowPaste;
-      if (!blocked) return;
       const key = e.browserEvent.key.toLowerCase();
       const mod = e.browserEvent.ctrlKey || e.browserEvent.metaKey;
       if (mod && (key === 'v' || key === 'c' || key === 'x')) {
-        e.preventDefault();
-        e.stopPropagation();
-        emitFlag('clipboard_blocked', `Blocked shortcut: ${key.toUpperCase()}`);
+        emitFlag('clipboard_shortcut', `Shortcut: ${key.toUpperCase()}`);
       }
     });
   };
 
-  // ─── Paste interception ──────────────────────────────────────────────────────
+  // ─── Paste interception (always allowed, always flagged) ────────────────────
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       const pastedText = e.clipboardData?.getData('text') ?? '';
-      if (!constraints.allowPaste) {
-        e.preventDefault();
-        emitFlag('paste_blocked', `Attempted to paste ${pastedText.length} chars`);
-      } else {
-        emitEvent('paste', { length: pastedText.length });
-        emitFlag('paste', `Pasted ${pastedText.length} chars`);
-        setPasteCount(p => p + 1);
-      }
-    };
-    const handleCopyCut = (e: ClipboardEvent) => {
-      if (!constraints.allowPaste) {
-        e.preventDefault();
-        emitFlag('clipboard_blocked', `${e.type} blocked`);
-      }
+      emitEvent('paste', { length: pastedText.length });
+      emitFlag('paste', `Pasted ${pastedText.length} chars`);
+      setPasteCount(p => p + 1);
     };
     document.addEventListener('paste', handlePaste, true);
-    document.addEventListener('copy', handleCopyCut, true);
-    document.addEventListener('cut', handleCopyCut, true);
     return () => {
       document.removeEventListener('paste', handlePaste, true);
-      document.removeEventListener('copy', handleCopyCut, true);
-      document.removeEventListener('cut', handleCopyCut, true);
     };
-  }, [constraints.allowPaste, emitEvent, emitFlag]);
+  }, [emitEvent, emitFlag]);
 
-  // ─── Tab / visibility monitoring ─────────────────────────────────────────────
+  // ─── Tab / visibility monitoring (always flagged) ───────────────────────────
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
         setTabSwitches(t => t + 1);
         emitFlag('tab_switch', 'Page became hidden');
-        if (!constraints.allowTabSwitch) {
-          setFullscreenWarning(true);
-        }
+        setFullscreenWarning(true);
       } else {
         emitEvent('returned', {});
         setFullscreenWarning(false);
@@ -231,7 +204,7 @@ export default function StudentIDE() {
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [constraints.allowTabSwitch, emitEvent, emitFlag]);
+  }, [emitEvent, emitFlag]);
 
   // ─── Window blur / focus monitoring ─────────────────────────────────────────
   useEffect(() => {
@@ -452,11 +425,6 @@ export default function StudentIDE() {
       <footer className={styles.footer}>
         <span>📡 Connected</span>
         <span>{user?.name}</span>
-        <span className={styles.constraints}>
-          Paste: <strong style={{ color: constraints.allowPaste ? 'var(--green)' : 'var(--red)' }}>{constraints.allowPaste ? 'allowed' : 'blocked'}</strong>
-          &nbsp;·&nbsp;
-          Tab switch: <strong style={{ color: constraints.allowTabSwitch ? 'var(--green)' : 'var(--red)' }}>{constraints.allowTabSwitch ? 'allowed' : 'flagged'}</strong>
-        </span>
       </footer>
     </div>
   );
