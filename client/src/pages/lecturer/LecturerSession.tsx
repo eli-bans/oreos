@@ -43,7 +43,7 @@ export default function LecturerSession() {
       setStudents(prev => {
         const m = new Map(prev);
         const existing = m.get(data.studentId);
-        m.set(data.studentId, { ...existing, id: data.studentId, name: data.name, email: data.email, online: true, code: existing?.code ?? '', language: existing?.language ?? 'javascript', joined_at: Date.now(), flag_count: existing?.flag_count ?? 0 });
+        m.set(data.studentId, { ...existing, id: data.studentId, name: data.name, email: data.email, online: true, code: existing?.code ?? '', language: existing?.language ?? 'javascript', joined_at: Math.floor(Date.now() / 1000), flag_count: existing?.flag_count ?? 0 });
         return m;
       });
     });

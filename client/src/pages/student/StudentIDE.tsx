@@ -78,6 +78,7 @@ export default function StudentIDE() {
   const codeRef = useRef('');
   const lastSentRef = useRef(0);
   const starterInjected = useRef(false);
+  const idleFlaggedRef = useRef(false);
 
   // ─── Load session ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -133,6 +134,7 @@ export default function StudentIDE() {
       ts: Date.now(),
     });
     lastSentRef.current = Date.now();
+    idleFlaggedRef.current = false;
   }, [sessionId, language]);
 
   const emitFlag = useCallback((type: string, detail?: string) => {
@@ -220,7 +222,8 @@ export default function StudentIDE() {
     const interval = setInterval(() => {
       const now = Date.now();
       const idleSecs = Math.round((now - lastSentRef.current) / 1000);
-      if (idleSecs > 30) {
+      if (idleSecs > 30 && !idleFlaggedRef.current) {
+        idleFlaggedRef.current = true;
         emitFlag('idle', `Idle for ${idleSecs}s`);
       }
       emitEvent('heartbeat', { idleSecs });

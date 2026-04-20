@@ -91,8 +91,9 @@ module.exports = function attachSockets(io) {
         .run(flagId, sessionId, user.id, type, detail ?? null, ts);
 
       io.to(`lecturer:${sessionId}`).emit('student:flagged', {
-        flagId,
-        studentId: user.id,
+        id: flagId,
+        session_id: sessionId,
+        student_id: user.id,
         name: user.name,
         type,
         detail,
@@ -117,7 +118,7 @@ module.exports = function attachSockets(io) {
       const withCode = participants.map(p => {
         const snap = db.prepare('SELECT content, language, ts FROM snapshots WHERE session_id = ? AND student_id = ? ORDER BY ts DESC LIMIT 1').get(sessionId, p.id);
         const flagCount = db.prepare('SELECT COUNT(*) as c FROM flags WHERE session_id = ? AND student_id = ?').get(sessionId, p.id);
-        return { ...p, code: snap?.content ?? '', language: snap?.language ?? 'javascript', lastSeen: snap?.ts, flagCount: flagCount?.c ?? 0 };
+        return { ...p, code: snap?.content ?? '', language: snap?.language ?? 'javascript', lastSeen: snap?.ts, flag_count: flagCount?.c ?? 0 };
       });
 
       socket.emit('session:participants', withCode);
@@ -138,8 +139,8 @@ module.exports = function attachSockets(io) {
       if (!session) return socket.emit('error', 'Not authorized');
 
       const updates = { status };
-      if (status === 'active') updates.started_at = Date.now();
-      if (status === 'ended')  updates.ended_at   = Date.now();
+      if (status === 'active') updates.started_at = Math.floor(Date.now() / 1000);
+      if (status === 'ended')  updates.ended_at   = Math.floor(Date.now() / 1000);
 
       db.prepare(`UPDATE sessions SET status = ?${status === 'active' ? ', started_at = ?' : status === 'ended' ? ', ended_at = ?' : ''} WHERE id = ?`)
         .run(...(status === 'waiting' ? [status, sessionId] : [status, updates.started_at ?? updates.ended_at, sessionId]));
