@@ -69,4 +69,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_flags_session ON flags(session_id);
 `);
 
+try {
+  db.exec(`ALTER TABLE sessions ADD COLUMN questions TEXT NOT NULL DEFAULT '[]'`);
+} catch {
+  // column already exists
+}
+
 module.exports = db;

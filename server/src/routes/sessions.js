@@ -2,6 +2,13 @@ const router = require('express').Router();
 const { v4: uuid } = require('uuid');
 const db = require('../db/schema');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { parseQuestions, parseSessionRow } = require('../sessionUtils');
+
+function normalizeQuestions(input) {
+  if (!input) return [];
+  if (!Array.isArray(input)) return [];
+  return input.map((q) => String(q).trim()).filter(Boolean);
+}
 
 function randomCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -9,8 +16,9 @@ function randomCode() {
 
 // Lecturer: create a session
 router.post('/', requireAuth, requireRole('lecturer'), (req, res) => {
-  const { name, constraints = {} } = req.body;
+  const { name, constraints = {}, questions } = req.body;
   if (!name) return res.status(400).json({ error: 'Session name required' });
+  const normalizedQuestions = normalizeQuestions(questions);
 
   let code;
   do { code = randomCode(); }
@@ -18,9 +26,9 @@ router.post('/', requireAuth, requireRole('lecturer'), (req, res) => {
 
   const id = uuid();
   db.prepare(`
-    INSERT INTO sessions (id, name, lecturer_id, join_code, constraints)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, name, req.user.id, code, JSON.stringify(constraints));
+    INSERT INTO sessions (id, name, lecturer_id, join_code, constraints, questions)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, name, req.user.id, code, JSON.stringify(constraints), JSON.stringify(normalizedQuestions));
 
   const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
   res.json(parseSession(session));
@@ -39,7 +47,58 @@ router.get('/join/:code', requireAuth, (req, res) => {
   res.json(parseSession(session));
 });
 
-// Get single session (lecturer)
+// Student: restore latest saved work for this session
+router.get('/:id/workspace', requireAuth, (req, res) => {
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Not found' });
+
+  const snap = db.prepare(`
+    SELECT content, language, ts FROM snapshots
+    WHERE session_id = ? AND student_id = ?
+    ORDER BY ts DESC LIMIT 1
+  `).get(req.params.id, req.user.id);
+
+  if (snap?.content) {
+    return res.json({
+      content: snap.content,
+      language: snap.language,
+      hasSavedWork: true,
+      savedAt: snap.ts,
+    });
+  }
+
+  // Fallback: latest event that carried full editor text (between snapshot intervals)
+  const recentEvents = db.prepare(`
+    SELECT data FROM events
+    WHERE session_id = ? AND student_id = ?
+    ORDER BY ts DESC LIMIT 100
+  `).all(req.params.id, req.user.id);
+
+  for (const row of recentEvents) {
+    try {
+      const data = JSON.parse(row.data);
+      if (typeof data.fullCode === 'string' && data.fullCode.length > 0) {
+        const constraints = JSON.parse(session.constraints || '{}');
+        return res.json({
+          content: data.fullCode,
+          language: data.language || constraints.language || 'javascript',
+          hasSavedWork: true,
+        });
+      }
+    } catch {
+      // ignore malformed event payloads
+    }
+  }
+
+  const constraints = JSON.parse(session.constraints || '{}');
+  res.json({
+    content: '',
+    language: constraints.language || 'javascript',
+    hasSavedWork: false,
+  });
+});
+
+// Get single session
 router.get('/:id', requireAuth, (req, res) => {
   const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id);
   if (!session) return res.status(404).json({ error: 'Not found' });
@@ -51,7 +110,7 @@ router.patch('/:id', requireAuth, requireRole('lecturer'), (req, res) => {
   const session = db.prepare('SELECT * FROM sessions WHERE id = ? AND lecturer_id = ?').get(req.params.id, req.user.id);
   if (!session) return res.status(404).json({ error: 'Not found' });
 
-  const { status, constraints } = req.body;
+  const { status, constraints, questions } = req.body;
   const updates = [];
   const params = [];
 
@@ -64,6 +123,10 @@ router.patch('/:id', requireAuth, requireRole('lecturer'), (req, res) => {
   if (constraints !== undefined) {
     updates.push('constraints = ?');
     params.push(JSON.stringify(constraints));
+  }
+  if (questions !== undefined) {
+    updates.push('questions = ?');
+    params.push(JSON.stringify(normalizeQuestions(questions)));
   }
   if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
 
@@ -113,7 +176,7 @@ router.get('/:id/flags', requireAuth, requireRole('lecturer'), (req, res) => {
 });
 
 function parseSession(s) {
-  return { ...s, constraints: JSON.parse(s.constraints) };
+  return parseSessionRow(s);
 }
 
 module.exports = router;

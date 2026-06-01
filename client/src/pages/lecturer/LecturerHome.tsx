@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, Session } from '@/lib/api';
+import { questionsFromText } from '@/lib/questions';
 import { useAuthStore } from '@/store/auth';
 import styles from './LecturerHome.module.css';
 
@@ -11,6 +12,7 @@ export default function LecturerHome() {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [constraints, setConstraints] = useState({ language: 'javascript' });
+  const [questionsText, setQuestionsText] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -21,9 +23,14 @@ export default function LecturerHome() {
     e.preventDefault();
     if (!newName.trim()) return;
     try {
-      const s = await api.createSession({ name: newName.trim(), constraints });
+      const s = await api.createSession({
+        name: newName.trim(),
+        constraints,
+        questions: questionsFromText(questionsText),
+      });
       setSessions(prev => [s, ...prev]);
       setNewName('');
+      setQuestionsText('');
       setCreating(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create session');
@@ -61,6 +68,17 @@ export default function LecturerHome() {
                 <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Midterm Exam — CS101" autoFocus />
               </div>
               <div className={styles.field}>
+                <label>Questions</label>
+                <textarea
+                  value={questionsText}
+                  onChange={e => setQuestionsText(e.target.value)}
+                  placeholder={'Write one or more questions.\n\nSeparate questions with a blank line.\n\nExample:\nWrite a function that returns the sum of two integers.\n\nGiven an array, return the maximum element.'}
+                  rows={8}
+                  className={styles.questionsInput}
+                />
+                <span className={styles.fieldHint}>Students see these in the IDE when they join.</span>
+              </div>
+              <div className={styles.field}>
                 <label>Language</label>
                 <select value={constraints.language} onChange={e => setConstraints(c => ({ ...c, language: e.target.value }))}>
                   <option value="javascript">JavaScript</option>
@@ -95,7 +113,9 @@ export default function LecturerHome() {
                 </div>
                 <div className={styles.sessionMeta}>
                   <span className={styles.joinCode}>Code: <strong>{s.join_code}</strong></span>
-                  <span className={styles.sessionLang}>{s.constraints.language ?? 'any'}</span>
+                  <span className={styles.sessionLang}>
+                    {(s.questions?.length ?? 0) > 0 ? `${s.questions.length} question(s)` : 'No questions'} · {s.constraints.language ?? 'any'}
+                  </span>
                 </div>
                 <div className={styles.sessionDate}>
                   {new Date(s.created_at * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}

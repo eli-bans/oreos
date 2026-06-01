@@ -32,6 +32,14 @@
 
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
 .field label { font-size: 12px; font-weight: 500; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.03em; }
+.questionsInput {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.fieldHint { font-size: 11px; color: var(--text-3); }
 
 .constraintsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
 

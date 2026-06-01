@@ -47,7 +47,22 @@
 .count { background: var(--bg-hover); color: var(--text-2); padding: 1px 6px; border-radius: 999px; font-size: 10px; }
 .flagCount { background: var(--red-dim); color: var(--red); }
 
-.studentList, .flagList { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.studentList, .flagList, .questionsPanel { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.questionsPanel { gap: 8px; }
+.questionsHelp { font-size: 11px; color: var(--text-3); line-height: 1.4; }
+.questionsInput {
+  width: 100%;
+  min-height: 200px;
+  resize: vertical;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+  color: var(--text-1);
+}
+.questionsPreviewMeta { font-size: 11px; color: var(--green); }
 .empty { color: var(--text-3); font-size: 12px; text-align: center; padding: 20px; }
 
 .studentItem {

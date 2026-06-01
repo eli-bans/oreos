@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuid } = require('uuid');
 const db = require('../db/schema');
 const { JWT_SECRET } = require('../middleware/auth');
+const { parseSessionRow } = require('../sessionUtils');
 
 const SNAPSHOT_INTERVAL_MS = 5000;
 
@@ -44,11 +45,25 @@ module.exports = function attachSockets(io) {
         email: user.email,
       });
 
-      // Send current session state + constraints
+      const parsed = parseSessionRow(session);
       socket.emit('session:state', {
-        status: session.status,
-        constraints: JSON.parse(session.constraints),
+        status: parsed.status,
+        constraints: parsed.constraints,
+        questions: parsed.questions,
       });
+
+      const snap = db.prepare(`
+        SELECT content, language FROM snapshots
+        WHERE session_id = ? AND student_id = ?
+        ORDER BY ts DESC LIMIT 1
+      `).get(sessionId, user.id);
+
+      if (snap?.content) {
+        socket.emit('student:workspace', {
+          content: snap.content,
+          language: snap.language,
+        });
+      }
     });
 
     // --- STUDENT: code change event ---
@@ -59,6 +74,11 @@ module.exports = function attachSockets(io) {
 
       // Throttled snapshot: save full code every SNAPSHOT_INTERVAL_MS
       const now = Date.now();
+      if (data?.fullCode !== undefined) {
+        socket.lastSnapshotCode = data.fullCode;
+        socket.lastSnapshotLanguage = data.language ?? 'javascript';
+      }
+
       if (data?.fullCode !== undefined && now - (socket.lastSnapshot || 0) >= SNAPSHOT_INTERVAL_MS) {
         db.prepare('INSERT INTO snapshots (id, session_id, student_id, content, language, ts) VALUES (?, ?, ?, ?, ?, ?)')
           .run(uuid(), sessionId, user.id, data.fullCode, data.language ?? 'javascript', now);
@@ -124,6 +144,20 @@ module.exports = function attachSockets(io) {
       socket.emit('session:participants', withCode);
     });
 
+    // --- LECTURER: update questions for students ---
+    socket.on('lecturer:update_questions', ({ sessionId, questions }) => {
+      const session = db.prepare('SELECT * FROM sessions WHERE id = ? AND lecturer_id = ?').get(sessionId, user.id);
+      if (!session) return socket.emit('error', 'Not authorized');
+      if (session.status === 'ended') return socket.emit('error', 'Session has ended');
+
+      const normalized = Array.isArray(questions)
+        ? questions.map((q) => String(q).trim()).filter(Boolean)
+        : [];
+      db.prepare('UPDATE sessions SET questions = ? WHERE id = ?').run(JSON.stringify(normalized), sessionId);
+      io.to(`session:${sessionId}`).emit('session:questions_updated', normalized);
+      io.to(`lecturer:${sessionId}`).emit('session:questions_updated', normalized);
+    });
+
     // --- LECTURER: push constraint update to students ---
     socket.on('lecturer:update_constraints', ({ sessionId, constraints }) => {
       const session = db.prepare('SELECT * FROM sessions WHERE id = ? AND lecturer_id = ?').get(sessionId, user.id);
@@ -145,11 +179,22 @@ module.exports = function attachSockets(io) {
       db.prepare(`UPDATE sessions SET status = ?${status === 'active' ? ', started_at = ?' : status === 'ended' ? ', ended_at = ?' : ''} WHERE id = ?`)
         .run(...(status === 'waiting' ? [status, sessionId] : [status, updates.started_at ?? updates.ended_at, sessionId]));
 
-      io.to(`session:${sessionId}`).emit('session:state', { status, constraints: JSON.parse(session.constraints) });
+      const updated = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
+      const parsed = parseSessionRow(updated);
+      io.to(`session:${sessionId}`).emit('session:state', {
+        status: parsed.status,
+        constraints: parsed.constraints,
+        questions: parsed.questions,
+      });
       io.to(`lecturer:${sessionId}`).emit('session:status_changed', { status });
     });
 
     socket.on('disconnect', () => {
+      if (socket.sessionId && socket.lastSnapshotCode) {
+        const now = Date.now();
+        db.prepare('INSERT INTO snapshots (id, session_id, student_id, content, language, ts) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(uuid(), socket.sessionId, user.id, socket.lastSnapshotCode, socket.lastSnapshotLanguage ?? 'javascript', now);
+      }
       if (socket.sessionId) {
         io.to(`lecturer:${socket.sessionId}`).emit('student:left', { studentId: user.id });
       }

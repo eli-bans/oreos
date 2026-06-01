@@ -5,6 +5,7 @@ const path = require('path');
 const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const { requireAuth } = require('../middleware/auth');
+const { compileJavaProject } = require('../javaCompile');
 
 const execFileAsync = promisify(execFile);
 const COMPILE_TIMEOUT_MS = 10000;
@@ -60,34 +61,6 @@ function runWithInput(command, args, stdin = '') {
     child.stdin.write(String(stdin || ''));
     child.stdin.end();
   });
-}
-
-async function compileJavaSource(source) {
-  const normalizedSource = String(source || '');
-  if (!normalizedSource.trim()) {
-    throw new Error('Java source code is required');
-  }
-
-  const classMatch = normalizedSource.match(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/);
-  const className = classMatch?.[1] || 'Main';
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'oreos-java-'));
-  const javaFile = path.join(tempDir, `${className}.java`);
-
-  try {
-    await fs.writeFile(javaFile, normalizedSource, 'utf8');
-    const { stdout, stderr } = await execFileAsync('javac', [javaFile], { timeout: COMPILE_TIMEOUT_MS });
-    return {
-      className,
-      tempDir,
-      compileOutput: (stdout || stderr || '').trim(),
-    };
-  } catch (error) {
-    await fs.rm(tempDir, { recursive: true, force: true });
-    const output = (error?.stderr || error?.stdout || error?.message || 'Compilation failed').trim();
-    const err = new Error(output);
-    err.output = output;
-    throw err;
-  }
 }
 
 async function compilePythonSource(source) {
@@ -149,11 +122,10 @@ async function compileCppSource(source) {
 }
 
 router.post('/java', requireAuth, async (req, res) => {
-  const source = String(req.body?.source || '');
-  if (!source.trim()) return res.status(400).json({ error: 'Java source code is required' });
-
   try {
-    const { className, tempDir, compileOutput } = await compileJavaSource(source);
+    const { className, tempDir, compileOutput } = await compileJavaProject(req.body, {
+      timeoutMs: COMPILE_TIMEOUT_MS,
+    });
     await fs.rm(tempDir, { recursive: true, force: true });
     return res.json({
       ok: true,
@@ -172,13 +144,11 @@ router.post('/java', requireAuth, async (req, res) => {
 });
 
 router.post('/java/run', requireAuth, async (req, res) => {
-  const source = String(req.body?.source || '');
   const stdin = String(req.body?.stdin || '');
-  if (!source.trim()) return res.status(400).json({ error: 'Java source code is required' });
 
   let tempDir = '';
   try {
-    const compiled = await compileJavaSource(source);
+    const compiled = await compileJavaProject(req.body, { timeoutMs: COMPILE_TIMEOUT_MS });
     tempDir = compiled.tempDir;
     const { output } = await runWithInput('java', ['-cp', tempDir, compiled.className], stdin);
 

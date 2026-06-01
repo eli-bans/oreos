@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { api, Flag, Participant, Session } from '@/lib/api';
+import { formatJavaWorkspaceForDisplay } from '@/lib/javaWorkspace';
 import { getSocket } from '@/lib/socket';
+import { questionsFromText, questionsToText } from '@/lib/questions';
 import styles from './LecturerSession.module.css';
 
 interface LiveStudent extends Participant {
@@ -18,12 +20,17 @@ export default function LecturerSession() {
   const [students, setStudents] = useState<Map<string, LiveStudent>>(new Map());
   const [flags, setFlags] = useState<Flag[]>([]);
   const [focused, setFocused] = useState<string | null>(null);
-  const [tab, setTab] = useState<'students' | 'flags'>('students');
+  const [tab, setTab] = useState<'students' | 'flags' | 'questions'>('students');
+  const [questionsText, setQuestionsText] = useState('');
+  const [questionsSaving, setQuestionsSaving] = useState(false);
   const socketRef = useRef(getSocket());
 
   useEffect(() => {
     if (!id) return;
-    api.getSession(id).then(setSession).catch(() => navigate('/lecturer'));
+    api.getSession(id).then(s => {
+      setSession(s);
+      setQuestionsText(questionsToText(s.questions ?? []));
+    }).catch(() => navigate('/lecturer'));
     api.getParticipants(id).then(list => {
       setStudents(new Map(list.map(p => [p.id, { ...p, online: false, code: p.latest_code ?? '', language: p.language ?? 'javascript' }])));
     });
@@ -80,6 +87,11 @@ export default function LecturerSession() {
       setSession(prev => prev ? { ...prev, status: status as Session['status'] } : prev);
     });
 
+    socket.on('session:questions_updated', (questions: string[]) => {
+      setSession(prev => prev ? { ...prev, questions } : prev);
+      setQuestionsText(questionsToText(questions));
+    });
+
     return () => {
       socket.off('session:participants');
       socket.off('student:joined');
@@ -87,6 +99,7 @@ export default function LecturerSession() {
       socket.off('student:code_update');
       socket.off('student:flagged');
       socket.off('session:status_changed');
+      socket.off('session:questions_updated');
     };
   }, [id]);
 
@@ -98,6 +111,22 @@ export default function LecturerSession() {
     const updated = { ...session!.constraints, language: lang };
     socketRef.current.emit('lecturer:update_constraints', { sessionId: id, constraints: updated });
     setSession(prev => prev ? { ...prev, constraints: updated } : prev);
+  };
+
+  const publishQuestions = async () => {
+    if (!id || session?.status === 'ended') return;
+    const questions = questionsFromText(questionsText);
+    setQuestionsSaving(true);
+    try {
+      socketRef.current.emit('lecturer:update_questions', { sessionId: id, questions });
+      const updated = await api.updateSession(id, { questions });
+      setSession(updated);
+      setQuestionsText(questionsToText(updated.questions ?? []));
+    } catch {
+      // socket may still have updated students; keep local text
+    } finally {
+      setQuestionsSaving(false);
+    }
   };
 
   const focusedStudent = focused ? students.get(focused) : null;
@@ -143,6 +172,9 @@ export default function LecturerSession() {
             <button className={`${styles.sideTab} ${tab === 'flags' ? styles.sideTabActive : ''}`} onClick={() => setTab('flags')}>
               Flags {flags.length > 0 && <span className={`${styles.count} ${styles.flagCount}`}>{flags.length}</span>}
             </button>
+            <button className={`${styles.sideTab} ${tab === 'questions' ? styles.sideTabActive : ''}`} onClick={() => setTab('questions')}>
+              Questions
+            </button>
           </div>
 
           {tab === 'students' && (
@@ -167,6 +199,37 @@ export default function LecturerSession() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {tab === 'questions' && (
+            <div className={styles.questionsPanel}>
+              <p className={styles.questionsHelp}>
+                Write questions for students. Separate multiple questions with a blank line.
+              </p>
+              <textarea
+                value={questionsText}
+                onChange={e => setQuestionsText(e.target.value)}
+                className={styles.questionsInput}
+                rows={12}
+                disabled={session.status === 'ended'}
+                placeholder="Q1: Implement binary search..."
+              />
+              {session.status !== 'ended' && (
+                <button
+                  className="btn btn-primary"
+                  style={{ width: '100%', marginTop: 8 }}
+                  onClick={publishQuestions}
+                  disabled={questionsSaving}
+                >
+                  {questionsSaving ? 'Publishing…' : 'Publish to students'}
+                </button>
+              )}
+              {(session.questions?.length ?? 0) > 0 && (
+                <p className={styles.questionsPreviewMeta}>
+                  Live: {session.questions.length} question(s) visible to students
+                </p>
+              )}
             </div>
           )}
 
@@ -199,7 +262,11 @@ export default function LecturerSession() {
               <Editor
                 height="calc(100% - 48px)"
                 language={focusedStudent.language}
-                value={focusedStudent.code || '// Student has not written anything yet'}
+                value={
+                  focusedStudent.language === 'java'
+                    ? formatJavaWorkspaceForDisplay(focusedStudent.code)
+                    : focusedStudent.code || '// Student has not written anything yet'
+                }
                 theme="vs-dark"
                 options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false }}
               />
@@ -220,7 +287,9 @@ export default function LecturerSession() {
                     {s.flag_count > 0 && <span className="badge badge-red" style={{ marginLeft: 'auto' }}>{s.flag_count}</span>}
                   </div>
                   <div className={styles.miniCode}>
-                    <pre>{(s.code || '').slice(0, 300)}</pre>
+                    <pre>
+                      {(s.language === 'java' ? formatJavaWorkspaceForDisplay(s.code) : s.code || '').slice(0, 300)}
+                    </pre>
                   </div>
                 </div>
               ))}

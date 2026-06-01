@@ -26,7 +26,7 @@ export const api = {
   login: (body: { email: string; password: string }) =>
     request<{ token: string; user: User }>('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
 
-  createSession: (body: { name: string; constraints?: Constraints }) =>
+  createSession: (body: { name: string; constraints?: Constraints; questions?: string[] }) =>
     request<Session>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
 
   listSessions: () =>
@@ -38,7 +38,12 @@ export const api = {
   getSession: (id: string) =>
     request<Session>(`/sessions/${id}`),
 
-  updateSession: (id: string, body: Partial<{ status: string; constraints: Constraints }>) =>
+  getMyWorkspace: (sessionId: string) =>
+    request<{ content: string; language: string; hasSavedWork: boolean; savedAt?: number }>(
+      `/sessions/${sessionId}/workspace`
+    ),
+
+  updateSession: (id: string, body: Partial<{ status: string; constraints: Constraints; questions: string[] }>) =>
     request<Session>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
   getParticipants: (sessionId: string) =>
@@ -50,10 +55,10 @@ export const api = {
   getFlags: (sessionId: string) =>
     request<Flag[]>(`/sessions/${sessionId}/flags`),
 
-  compileJava: (source: string) =>
+  compileJava: (body: { source?: string; files?: { name: string; source: string }[] }) =>
     request<{ ok: boolean; message?: string; error?: string; className?: string; output?: string }>('/compile/java', {
       method: 'POST',
-      body: JSON.stringify({ source }),
+      body: JSON.stringify(body),
     }),
 
   compilePython: (source: string) =>
@@ -68,12 +73,12 @@ export const api = {
       body: JSON.stringify({ source }),
     }),
 
-  runJava: (source: string, stdin = '') =>
+  runJava: (body: { source?: string; files?: { name: string; source: string }[] }, stdin = '') =>
     request<{ ok: boolean; message?: string; error?: string; className?: string; output?: string; compileOutput?: string }>(
       '/compile/java/run',
       {
         method: 'POST',
-        body: JSON.stringify({ source, stdin }),
+        body: JSON.stringify({ ...body, stdin }),
       }
     ),
 
@@ -115,6 +120,7 @@ export interface Session {
   join_code: string;
   status: 'waiting' | 'active' | 'ended';
   constraints: Constraints;
+  questions: string[];
   created_at: number;
   started_at?: number;
   ended_at?: number;

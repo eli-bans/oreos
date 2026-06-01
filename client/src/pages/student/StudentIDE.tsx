@@ -3,6 +3,13 @@ import { useNavigate, useParams } from 'react-router-dom';
 import Editor, { OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import { api, Constraints, Session } from '@/lib/api';
+import {
+  createDefaultJavaWorkspace,
+  javaFilesToApiPayload,
+  JavaWorkspace,
+  legacyToJavaWorkspace,
+  serializeJavaWorkspace,
+} from '@/lib/javaWorkspace';
 import { getSocket } from '@/lib/socket';
 import { useAuthStore } from '@/store/auth';
 import styles from './StudentIDE.module.css';
@@ -74,30 +81,134 @@ export default function StudentIDE() {
   const [running, setRunning] = useState(false);
   const [stdinText, setStdinText] = useState('');
   const [showPanel, setShowPanel] = useState(false);
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [javaWorkspace, setJavaWorkspace] = useState<JavaWorkspace | null>(null);
 
   const codeRef = useRef('');
+  const javaWorkspaceRef = useRef<JavaWorkspace | null>(null);
   const lastSentRef = useRef(0);
-  const starterInjected = useRef(false);
+  const editorReadyRef = useRef(false);
   const idleFlaggedRef = useRef(false);
+  const pendingEditorContentRef = useRef<string | null>(null);
 
-  // ─── Load session ───────────────────────────────────────────────────────────
+  const syncCodeRef = useCallback((content: string, workspace: JavaWorkspace | null) => {
+    javaWorkspaceRef.current = workspace;
+    codeRef.current = workspace ? serializeJavaWorkspace(workspace) : content;
+  }, []);
+
+  const applyEditorContent = useCallback((content: string, workspace: JavaWorkspace | null = null) => {
+    pendingEditorContentRef.current = content;
+    syncCodeRef(content, workspace);
+    if (editorRef.current) {
+      editorRef.current.setValue(content);
+      pendingEditorContentRef.current = null;
+    }
+  }, [syncCodeRef]);
+
+  const persistActiveJavaFile = useCallback((editorValue: string) => {
+    const ws = javaWorkspaceRef.current;
+    if (!ws) return;
+    const next: JavaWorkspace = {
+      ...ws,
+      files: { ...ws.files, [ws.active]: editorValue },
+    };
+    javaWorkspaceRef.current = next;
+    setJavaWorkspace(next);
+    syncCodeRef(editorValue, next);
+  }, [syncCodeRef]);
+
+  const switchJavaFile = useCallback((fileName: string) => {
+    const ws = javaWorkspaceRef.current;
+    if (!ws || fileName === ws.active || !(fileName in ws.files)) return;
+    const editorValue = editorRef.current?.getValue() ?? ws.files[ws.active];
+    const next: JavaWorkspace = {
+      ...ws,
+      active: fileName,
+      files: { ...ws.files, [ws.active]: editorValue },
+    };
+    javaWorkspaceRef.current = next;
+    setJavaWorkspace(next);
+    syncCodeRef(next.files[fileName], next);
+    if (editorRef.current) {
+      editorRef.current.setValue(next.files[fileName]);
+    }
+  }, [syncCodeRef]);
+
+  const addJavaFile = useCallback(() => {
+    const ws = javaWorkspaceRef.current;
+    if (!ws) return;
+    const editorValue = editorRef.current?.getValue() ?? ws.files[ws.active];
+    let index = 1;
+    let fileName = 'Helper.java';
+    let className = 'Helper';
+    while (fileName in ws.files) {
+      index += 1;
+      className = `Helper${index}`;
+      fileName = `${className}.java`;
+    }
+    const source = `class ${className} {\n}\n`;
+    const next: JavaWorkspace = {
+      ...ws,
+      active: fileName,
+      files: { ...ws.files, [ws.active]: editorValue, [fileName]: source },
+    };
+    javaWorkspaceRef.current = next;
+    setJavaWorkspace(next);
+    syncCodeRef(source, next);
+    if (editorRef.current) {
+      editorRef.current.setValue(source);
+    }
+  }, [syncCodeRef]);
+
+  const removeJavaFile = useCallback((fileName: string) => {
+    const ws = javaWorkspaceRef.current;
+    if (!ws || Object.keys(ws.files).length <= 1) return;
+    const editorValue = editorRef.current?.getValue() ?? ws.files[ws.active];
+    const files = { ...ws.files, [ws.active]: editorValue };
+    delete files[fileName];
+    const names = Object.keys(files);
+    const active = ws.active === fileName ? names[0] : ws.active;
+    const next: JavaWorkspace = { ...ws, active, files };
+    javaWorkspaceRef.current = next;
+    setJavaWorkspace(next);
+    syncCodeRef(next.files[active], next);
+    if (editorRef.current && ws.active === fileName) {
+      editorRef.current.setValue(next.files[active]);
+    }
+  }, [syncCodeRef]);
+
+  // ─── Load session + restore saved work ─────────────────────────────────────
   useEffect(() => {
     if (!sessionId) return;
-    api.getSession(sessionId).then(s => {
-      setSession(s);
-      setStatus(s.status);
-      setConstraints(s.constraints);
-      const lang = s.constraints.language || 'javascript';
-      if (s.constraints.language) setLanguage(lang);
+    Promise.all([
+      api.getSession(sessionId),
+      api.getMyWorkspace(sessionId),
+    ])
+      .then(([s, workspace]) => {
+        setSession(s);
+        setStatus(s.status);
+        setConstraints(s.constraints);
+        setQuestions(s.questions ?? []);
+        const lang = workspace.language || s.constraints.language || 'javascript';
+        setLanguage(lang);
 
-      if (editorRef.current && !starterInjected.current) {
-        starterInjected.current = true;
-        const starter = makeStarterComment(lang, s.name);
-        editorRef.current.setValue(starter);
-        codeRef.current = starter;
-      }
-    }).catch(() => navigate('/student'));
-  }, [sessionId]);
+        if (lang === 'java') {
+          const ws = workspace.hasSavedWork && workspace.content
+            ? legacyToJavaWorkspace(workspace.content, s.name)
+            : createDefaultJavaWorkspace(s.name);
+          setJavaWorkspace(ws);
+          applyEditorContent(ws.files[ws.active], ws);
+        } else {
+          setJavaWorkspace(null);
+          const content =
+            workspace.hasSavedWork && workspace.content
+              ? workspace.content
+              : makeStarterComment(lang, s.name);
+          applyEditorContent(content);
+        }
+      })
+      .catch(() => navigate('/student'));
+  }, [sessionId, navigate, applyEditorContent]);
 
   // ─── Socket setup ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -106,9 +217,10 @@ export default function StudentIDE() {
 
     socket.emit('student:join', { sessionId });
 
-    socket.on('session:state', ({ status: s, constraints: c }: { status: StatusKind; constraints: Constraints }) => {
+    socket.on('session:state', ({ status: s, constraints: c, questions: q }: { status: StatusKind; constraints: Constraints; questions?: string[] }) => {
       setStatus(s);
       setConstraints(c);
+      if (q) setQuestions(q);
       if (c.language) setLanguage(c.language);
       if (s === 'ended') setSessionEnded(true);
     });
@@ -118,11 +230,31 @@ export default function StudentIDE() {
       if (c.language) setLanguage(c.language);
     });
 
+    socket.on('session:questions_updated', (q: string[]) => {
+      setQuestions(q);
+    });
+
+    socket.on('student:workspace', ({ content, language: lang }: { content: string; language: string }) => {
+      if (content) {
+        setLanguage(lang);
+        if (lang === 'java') {
+          const ws = legacyToJavaWorkspace(content, session?.name ?? 'Session');
+          setJavaWorkspace(ws);
+          applyEditorContent(ws.files[ws.active], ws);
+        } else {
+          setJavaWorkspace(null);
+          applyEditorContent(content);
+        }
+      }
+    });
+
     return () => {
       socket.off('session:state');
       socket.off('session:constraints_updated');
+      socket.off('session:questions_updated');
+      socket.off('student:workspace');
     };
-  }, [sessionId]);
+  }, [sessionId, applyEditorContent]);
 
   // ─── Emit keystroke/code event ───────────────────────────────────────────────
   const emitEvent = useCallback((type: string, data: Record<string, unknown> = {}) => {
@@ -146,18 +278,33 @@ export default function StudentIDE() {
   // ─── Monaco editor mount ─────────────────────────────────────────────────────
   const handleEditorMount: OnMount = (editor) => {
     editorRef.current = editor;
+    editorReadyRef.current = true;
 
-    if (session && !starterInjected.current) {
-      starterInjected.current = true;
-      const starter = makeStarterComment(language, session.name);
-      editor.setValue(starter);
-      codeRef.current = starter;
+    if (pendingEditorContentRef.current !== null) {
+      editor.setValue(pendingEditorContentRef.current);
+      pendingEditorContentRef.current = null;
+    } else if (session) {
+      if (language === 'java') {
+        const ws = javaWorkspaceRef.current ?? createDefaultJavaWorkspace(session.name);
+        javaWorkspaceRef.current = ws;
+        setJavaWorkspace(ws);
+        editor.setValue(ws.files[ws.active]);
+        syncCodeRef(ws.files[ws.active], ws);
+      } else {
+        const starter = makeStarterComment(language, session.name);
+        editor.setValue(starter);
+        syncCodeRef(starter, null);
+      }
     }
 
     // Log every content change
     editor.onDidChangeModelContent((e) => {
       const code = editor.getValue();
-      codeRef.current = code;
+      if (language === 'java' && javaWorkspaceRef.current) {
+        persistActiveJavaFile(code);
+      } else {
+        syncCodeRef(code, null);
+      }
 
       for (const change of e.changes) {
         emitEvent('change', { text: change.text, rangeLength: change.rangeLength });
@@ -237,9 +384,12 @@ export default function StudentIDE() {
     setCompiling(true);
     setCompileResult(null);
     try {
+      const javaPayload = javaWorkspaceRef.current
+        ? javaFilesToApiPayload(javaWorkspaceRef.current)
+        : { source: codeRef.current };
       const result =
         language === 'java'
-          ? await api.compileJava(codeRef.current)
+          ? await api.compileJava(javaPayload)
           : language === 'python'
             ? await api.compilePython(codeRef.current)
             : await api.compileCpp(codeRef.current);
@@ -264,9 +414,12 @@ export default function StudentIDE() {
     setRunning(true);
     setCompileResult(null);
     try {
+      const javaPayload = javaWorkspaceRef.current
+        ? javaFilesToApiPayload(javaWorkspaceRef.current)
+        : { source: codeRef.current };
       const result =
         language === 'java'
-          ? await api.runJava(codeRef.current, stdinText)
+          ? await api.runJava(javaPayload, stdinText)
           : language === 'python'
             ? await api.runPython(codeRef.current, stdinText)
             : await api.runCpp(codeRef.current, stdinText);
@@ -347,7 +500,24 @@ export default function StudentIDE() {
           </div>
           <select
             value={language}
-            onChange={e => setLanguage(e.target.value)}
+            onChange={e => {
+              const nextLang = e.target.value;
+              if (language === 'java' && editorRef.current) {
+                persistActiveJavaFile(editorRef.current.getValue());
+              }
+              if (nextLang === 'java') {
+                const ws = javaWorkspaceRef.current ?? createDefaultJavaWorkspace(session?.name ?? 'Session');
+                setJavaWorkspace(ws);
+                javaWorkspaceRef.current = ws;
+                applyEditorContent(ws.files[ws.active], ws);
+              } else {
+                setJavaWorkspace(null);
+                javaWorkspaceRef.current = null;
+                const fallback = editorRef.current?.getValue() || makeStarterComment(nextLang, session?.name ?? 'Session');
+                applyEditorContent(fallback);
+              }
+              setLanguage(nextLang);
+            }}
             className={styles.langSelect}
             disabled={!!constraints.language}
           >
@@ -380,24 +550,69 @@ export default function StudentIDE() {
         </div>
       )}
 
-      <div className={styles.editorWrap}>
-        <Editor
-          height="100%"
-          language={language}
-          defaultValue=""
-          theme="vs-dark"
-          onMount={handleEditorMount}
-          options={{
-            fontSize: 14,
-            minimap: { enabled: false },
-            lineNumbers: 'on',
-            scrollBeyondLastLine: false,
-            wordWrap: 'on',
-            tabSize: 2,
-            automaticLayout: true,
-            contextmenu: false,
-          }}
-        />
+      <div className={styles.workspace}>
+        {questions.length > 0 && (
+          <aside className={styles.questionsPanel}>
+            <h3 className={styles.questionsTitle}>Questions</h3>
+            {questions.map((q, i) => (
+              <div key={i} className={styles.questionItem}>
+                <span className={styles.questionNum}>Q{i + 1}</span>
+                <p className={styles.questionText}>{q}</p>
+              </div>
+            ))}
+          </aside>
+        )}
+        {language === 'java' && javaWorkspace && (
+          <aside className={styles.filesPanel}>
+            <div className={styles.filesHeader}>
+              <span>Files</span>
+              <button type="button" className={styles.filesAdd} onClick={addJavaFile} title="Add Java file">
+                +
+              </button>
+            </div>
+            <div className={styles.filesList}>
+              {Object.keys(javaWorkspace.files).sort().map((fileName) => (
+                <div
+                  key={fileName}
+                  className={`${styles.fileTab} ${fileName === javaWorkspace.active ? styles.fileTabActive : ''}`}
+                >
+                  <button type="button" className={styles.fileTabBtn} onClick={() => switchJavaFile(fileName)}>
+                    {fileName}
+                  </button>
+                  {Object.keys(javaWorkspace.files).length > 1 && (
+                    <button
+                      type="button"
+                      className={styles.fileRemove}
+                      onClick={() => removeJavaFile(fileName)}
+                      title={`Remove ${fileName}`}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </aside>
+        )}
+        <div className={styles.editorWrap}>
+          <Editor
+            height="100%"
+            language={language}
+            defaultValue=""
+            theme="vs-dark"
+            onMount={handleEditorMount}
+            options={{
+              fontSize: 14,
+              minimap: { enabled: false },
+              lineNumbers: 'on',
+              scrollBeyondLastLine: false,
+              wordWrap: 'on',
+              tabSize: 2,
+              automaticLayout: true,
+              contextmenu: false,
+            }}
+          />
+        </div>
       </div>
       {['java', 'python', 'cpp'].includes(language) && showPanel && (
         <div className={styles.bottomPanel}>
