@@ -35,6 +35,8 @@ const io = new Server(server, {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+app.set('io', io);
+
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/sessions', require('./routes/sessions'));
 app.use('/api/compile', require('./routes/compile'));

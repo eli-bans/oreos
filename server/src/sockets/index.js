@@ -138,7 +138,8 @@ module.exports = function attachSockets(io) {
       const withCode = participants.map(p => {
         const snap = db.prepare('SELECT content, language, ts FROM snapshots WHERE session_id = ? AND student_id = ? ORDER BY ts DESC LIMIT 1').get(sessionId, p.id);
         const flagCount = db.prepare('SELECT COUNT(*) as c FROM flags WHERE session_id = ? AND student_id = ?').get(sessionId, p.id);
-        return { ...p, code: snap?.content ?? '', language: snap?.language ?? 'javascript', lastSeen: snap?.ts, flag_count: flagCount?.c ?? 0 };
+        const submission = db.prepare('SELECT ts FROM submissions WHERE session_id = ? AND student_id = ?').get(sessionId, p.id);
+        return { ...p, code: snap?.content ?? '', language: snap?.language ?? 'javascript', lastSeen: snap?.ts, flag_count: flagCount?.c ?? 0, submitted_at: submission?.ts };
       });
 
       socket.emit('session:participants', withCode);

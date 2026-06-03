@@ -6,6 +6,7 @@ import LecturerSession from '@/pages/lecturer/LecturerSession';
 import LecturerReplay from '@/pages/lecturer/LecturerReplay';
 import StudentLobby from '@/pages/student/StudentLobby';
 import StudentIDE from '@/pages/student/StudentIDE';
+import { Toaster } from '@/components/Toaster';
 
 function RequireAuth({ children, role }: { children: React.ReactNode; role?: string }) {
   const { user } = useAuthStore();
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/student/ide/:sessionId" element={<RequireAuth role="student"><StudentIDE /></RequireAuth>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <Toaster />
     </BrowserRouter>
   );
 }

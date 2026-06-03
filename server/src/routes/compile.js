@@ -12,9 +12,28 @@ const COMPILE_TIMEOUT_MS = 10000;
 const RUN_TIMEOUT_MS = 5000;
 const MAX_BUFFER_BYTES = 1024 * 1024;
 
+// Force monochrome output from subprocesses so we don't surface escape codes
+// in the student-facing terminal. NO_COLOR is the cross-tool standard;
+// PYTHONNOCOLOR disables Python 3.13's new colorized tracebacks; TERM=dumb
+// stops most other tools (g++ included) from emitting ANSI.
+const PLAIN_ENV = {
+  ...process.env,
+  NO_COLOR: '1',
+  CLICOLOR: '0',
+  PYTHONNOCOLOR: '1',
+  TERM: 'dumb',
+};
+
+// Defensive: strip any ANSI escape sequence that still slips through.
+// Covers CSI sequences (colors, cursor moves) and OSC sequences (titles).
+const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
+function stripAnsi(text) {
+  return String(text || '').replace(ANSI_RE, '');
+}
+
 function runWithInput(command, args, stdin = '') {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: PLAIN_ENV });
     let stdout = '';
     let stderr = '';
     let finished = false;
@@ -48,9 +67,11 @@ function runWithInput(command, args, stdin = '') {
       clearTimeout(timer);
       if (finished) return;
       finished = true;
-      const output = (stdout || stderr || '').trim();
+      const cleanStdout = stripAnsi(stdout);
+      const cleanStderr = stripAnsi(stderr);
+      const output = (cleanStdout || cleanStderr || '').trim();
       if (code === 0) {
-        resolve({ stdout, stderr, output });
+        resolve({ stdout: cleanStdout, stderr: cleanStderr, output });
       } else {
         const err = new Error(output || 'Execution failed');
         err.output = output || 'Execution failed';
@@ -77,14 +98,15 @@ async function compilePythonSource(source) {
     const { stdout, stderr } = await execFileAsync('python3', ['-m', 'py_compile', pyFile], {
       timeout: COMPILE_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER_BYTES,
+      env: PLAIN_ENV,
     });
     return {
       tempDir,
-      compileOutput: (stdout || stderr || '').trim(),
+      compileOutput: stripAnsi((stdout || stderr || '')).trim(),
     };
   } catch (error) {
     await fs.rm(tempDir, { recursive: true, force: true });
-    const output = (error?.stderr || error?.stdout || error?.message || 'Compilation failed').trim();
+    const output = stripAnsi(error?.stderr || error?.stdout || error?.message || 'Compilation failed').trim();
     const err = new Error(output);
     err.output = output;
     throw err;
@@ -103,18 +125,19 @@ async function compileCppSource(source) {
 
   try {
     await fs.writeFile(cppFile, normalizedSource, 'utf8');
-    const { stdout, stderr } = await execFileAsync('g++', ['-std=c++17', cppFile, '-o', binaryFile], {
+    const { stdout, stderr } = await execFileAsync('g++', ['-fno-diagnostics-color', '-std=c++17', cppFile, '-o', binaryFile], {
       timeout: COMPILE_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER_BYTES,
+      env: PLAIN_ENV,
     });
     return {
       tempDir,
       binaryFile,
-      compileOutput: (stdout || stderr || '').trim(),
+      compileOutput: stripAnsi((stdout || stderr || '')).trim(),
     };
   } catch (error) {
     await fs.rm(tempDir, { recursive: true, force: true });
-    const output = (error?.stderr || error?.stdout || error?.message || 'Compilation failed').trim();
+    const output = stripAnsi(error?.stderr || error?.stdout || error?.message || 'Compilation failed').trim();
     const err = new Error(output);
     err.output = output;
     throw err;

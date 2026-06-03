@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor, { OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
@@ -12,7 +12,21 @@ import {
 } from '@/lib/javaWorkspace';
 import { getSocket } from '@/lib/socket';
 import { useAuthStore } from '@/store/auth';
+import { Modal } from '@/components/Modal';
+import { Kbd, modKey } from '@/components/Kbd';
+import { toast } from '@/components/Toaster';
 import styles from './StudentIDE.module.css';
+
+const LANG_LABEL: Record<string, string> = {
+  javascript: 'JavaScript',
+  typescript: 'TypeScript',
+  python: 'Python',
+  java: 'Java',
+  cpp: 'C++',
+  c: 'C',
+};
+
+const JAVA_CLASS_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 type StatusKind = 'waiting' | 'active' | 'ended';
 
@@ -83,12 +97,20 @@ export default function StudentIDE() {
   const [showPanel, setShowPanel] = useState(false);
   const [questions, setQuestions] = useState<string[]>([]);
   const [javaWorkspace, setJavaWorkspace] = useState<JavaWorkspace | null>(null);
+  const [submittedAt, setSubmittedAt] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showSubmittedSuccess, setShowSubmittedSuccess] = useState(false);
+  const [showAddFileModal, setShowAddFileModal] = useState(false);
+  const [newFileName, setNewFileName] = useState('');
 
   const codeRef = useRef('');
   const javaWorkspaceRef = useRef<JavaWorkspace | null>(null);
   const lastSentRef = useRef(0);
   const editorReadyRef = useRef(false);
   const idleFlaggedRef = useRef(false);
+  const hasStartedTypingRef = useRef(false);
   const pendingEditorContentRef = useRef<string | null>(null);
 
   const syncCodeRef = useCallback((content: string, workspace: JavaWorkspace | null) => {
@@ -134,19 +156,25 @@ export default function StudentIDE() {
     }
   }, [syncCodeRef]);
 
-  const addJavaFile = useCallback(() => {
+  const openAddJavaFile = useCallback(() => {
+    if (!javaWorkspaceRef.current || submittedAt) return;
+    setNewFileName('');
+    setShowAddFileModal(true);
+  }, [submittedAt]);
+
+  const commitAddJavaFile = useCallback((rawName: string): { ok: true } | { ok: false; reason: string } => {
     const ws = javaWorkspaceRef.current;
-    if (!ws) return;
-    const editorValue = editorRef.current?.getValue() ?? ws.files[ws.active];
-    let index = 1;
-    let fileName = 'Helper.java';
-    let className = 'Helper';
-    while (fileName in ws.files) {
-      index += 1;
-      className = `Helper${index}`;
-      fileName = `${className}.java`;
+    if (!ws) return { ok: false, reason: 'Workspace not ready' };
+    const className = rawName.trim().replace(/\.java$/i, '');
+    if (!className) return { ok: false, reason: 'Enter a class name.' };
+    if (!JAVA_CLASS_NAME.test(className)) {
+      return { ok: false, reason: 'Use letters, digits, _ or $. Don\'t start with a digit.' };
     }
-    const source = `class ${className} {\n}\n`;
+    const fileName = `${className}.java`;
+    if (fileName in ws.files) return { ok: false, reason: `${fileName} already exists.` };
+
+    const editorValue = editorRef.current?.getValue() ?? ws.files[ws.active];
+    const source = `class ${className} {\n    \n}\n`;
     const next: JavaWorkspace = {
       ...ws,
       active: fileName,
@@ -155,9 +183,8 @@ export default function StudentIDE() {
     javaWorkspaceRef.current = next;
     setJavaWorkspace(next);
     syncCodeRef(source, next);
-    if (editorRef.current) {
-      editorRef.current.setValue(source);
-    }
+    if (editorRef.current) editorRef.current.setValue(source);
+    return { ok: true };
   }, [syncCodeRef]);
 
   const removeJavaFile = useCallback((fileName: string) => {
@@ -189,6 +216,7 @@ export default function StudentIDE() {
         setStatus(s.status);
         setConstraints(s.constraints);
         setQuestions(s.questions ?? []);
+        if (workspace.submittedAt) setSubmittedAt(workspace.submittedAt);
         const lang = workspace.language || s.constraints.language || 'javascript';
         setLanguage(lang);
 
@@ -275,6 +303,16 @@ export default function StudentIDE() {
     setFlagCount(f => f + 1);
   }, [sessionId]);
 
+  // Monaco's listeners are bound exactly once at mount, so they would otherwise
+  // hold stale closures of `language`, `emitEvent`, and `emitFlag`. We mirror
+  // those into refs and read the refs from inside the listeners.
+  const languageRef = useRef(language);
+  const emitEventRef = useRef(emitEvent);
+  const emitFlagRef = useRef(emitFlag);
+  useEffect(() => { languageRef.current = language; }, [language]);
+  useEffect(() => { emitEventRef.current = emitEvent; }, [emitEvent]);
+  useEffect(() => { emitFlagRef.current = emitFlag; }, [emitFlag]);
+
   // ─── Monaco editor mount ─────────────────────────────────────────────────────
   const handleEditorMount: OnMount = (editor) => {
     editorRef.current = editor;
@@ -300,27 +338,42 @@ export default function StudentIDE() {
     // Log every content change
     editor.onDidChangeModelContent((e) => {
       const code = editor.getValue();
-      if (language === 'java' && javaWorkspaceRef.current) {
+      // Read state through refs — this callback is bound only once.
+      if (languageRef.current === 'java' && javaWorkspaceRef.current) {
         persistActiveJavaFile(code);
-      } else {
+      } else if (languageRef.current !== 'java') {
+        // Only clear the java workspace ref when we're NOT in a java session.
+        // Calling syncCodeRef(code, null) while on Java would null the workspace
+        // ref mid-flight (e.g. immediately after a file switch) and break the
+        // next file-tab click.
         syncCodeRef(code, null);
       }
 
+      // Mark "student has started writing" only on real edits — `isFlush` is
+      // true for programmatic setValue calls (initial load, language switch,
+      // file switch, new-file creation), which shouldn't count.
+      if (!e.isFlush && !hasStartedTypingRef.current) {
+        hasStartedTypingRef.current = true;
+        // From this moment on, idle is measured from the first real keystroke,
+        // not from a stale lastSent that was bumped by setValue.
+        lastSentRef.current = Date.now();
+      }
+
       for (const change of e.changes) {
-        emitEvent('change', { text: change.text, rangeLength: change.rangeLength });
+        emitEventRef.current('change', { text: change.text, rangeLength: change.rangeLength });
       }
     });
 
     // Log cursor movement
     editor.onDidChangeCursorPosition((e) => {
-      emitEvent('cursor', { line: e.position.lineNumber, col: e.position.column });
+      emitEventRef.current('cursor', { line: e.position.lineNumber, col: e.position.column });
     });
 
     editor.onKeyDown((e) => {
       const key = e.browserEvent.key.toLowerCase();
       const mod = e.browserEvent.ctrlKey || e.browserEvent.metaKey;
       if (mod && (key === 'v' || key === 'c' || key === 'x')) {
-        emitFlag('clipboard_shortcut', `Shortcut: ${key.toUpperCase()}`);
+        emitFlagRef.current('clipboard_shortcut', `Shortcut: ${key.toUpperCase()}`);
       }
     });
   };
@@ -365,15 +418,25 @@ export default function StudentIDE() {
   }, [emitFlag]);
 
   // ─── Heartbeat + idle tracking ───────────────────────────────────────────────
+  // Idle is only meaningful AFTER the student has actually started writing.
+  // Thinking time before the first keystroke (reading the brief, planning) is
+  // not a red flag, so we don't surface it as one.
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
       const idleSecs = Math.round((now - lastSentRef.current) / 1000);
-      if (idleSecs > 30 && !idleFlaggedRef.current) {
+      if (
+        hasStartedTypingRef.current &&
+        idleSecs > 30 &&
+        !idleFlaggedRef.current
+      ) {
         idleFlaggedRef.current = true;
         emitFlag('idle', `Idle for ${idleSecs}s`);
       }
-      emitEvent('heartbeat', { idleSecs });
+      emitEvent('heartbeat', {
+        idleSecs,
+        started: hasStartedTypingRef.current,
+      });
     }, 15000);
     return () => clearInterval(interval);
   }, [emitEvent, emitFlag]);
@@ -402,11 +465,14 @@ export default function StudentIDE() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Compilation failed';
       setCompileResult({ ok: false, text: message });
-      emitFlag('compile_error', message.slice(0, 500));
+      // Compile errors are part of writing code, not suspicious behaviour.
+      // Record them on the timeline (lecturer sees them in replay) but don't
+      // count them as integrity flags.
+      emitEvent('compile_error', { language, message: message.slice(0, 500) });
     } finally {
       setCompiling(false);
     }
-  }, [language, compiling, emitEvent, emitFlag]);
+  }, [language, compiling, emitEvent]);
 
   const handleRun = useCallback(async () => {
     if (!['java', 'python', 'cpp'].includes(language) || running) return;
@@ -432,11 +498,65 @@ export default function StudentIDE() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Execution failed';
       setCompileResult({ ok: false, text: message });
-      emitFlag('run_error', message.slice(0, 500));
+      // Same reasoning as compile_error: log it but don't raise a flag.
+      emitEvent('run_error', { language, message: message.slice(0, 500) });
     } finally {
       setRunning(false);
     }
-  }, [language, running, stdinText, emitEvent, emitFlag]);
+  }, [language, running, stdinText, emitEvent]);
+
+  const syncEditorIntoRef = useCallback(() => {
+    if (!editorRef.current) return;
+    if (language === 'java') {
+      persistActiveJavaFile(editorRef.current.getValue());
+    } else {
+      syncCodeRef(editorRef.current.getValue(), null);
+    }
+  }, [language, persistActiveJavaFile, syncCodeRef]);
+
+  const openSubmitModal = useCallback(() => {
+    if (submitting || submittedAt) return;
+    if (status === 'ended') {
+      toast.error('Session has ended', 'You can no longer submit work.');
+      return;
+    }
+    syncEditorIntoRef();
+    if (!codeRef.current.trim()) {
+      toast.error('Nothing to submit', 'Write some code first, then try again.');
+      return;
+    }
+    setSubmitError(null);
+    setShowSubmitModal(true);
+  }, [submitting, submittedAt, status, syncEditorIntoRef]);
+
+  const confirmSubmit = useCallback(async () => {
+    if (!sessionId || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const result = await api.submitWork(sessionId, {
+        content: codeRef.current,
+        language,
+      });
+      setSubmittedAt(result.submittedAt);
+      setShowSubmitModal(false);
+      setShowSubmittedSuccess(true);
+      emitEvent('submitted', { language });
+      toast.success('Submitted', `Your work was recorded at ${new Date(result.submittedAt).toLocaleTimeString()}.`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Submission failed';
+      setSubmitError(message);
+      toast.error('Submit failed', message);
+    } finally {
+      setSubmitting(false);
+    }
+  }, [sessionId, submitting, language, emitEvent]);
+
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.updateOptions({ readOnly: !!submittedAt });
+    }
+  }, [submittedAt]);
 
   // ─── Prevent right-click ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -460,7 +580,68 @@ export default function StudentIDE() {
     return () => document.removeEventListener('keydown', handler);
   }, [emitEvent, emitFlag]);
 
-  if (sessionEnded) {
+  // ─── App-level shortcuts: ⌘↵ run, ⌘⇧↵ submit ───────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          openSubmitModal();
+        } else if (['java', 'python', 'cpp'].includes(language)) {
+          handleRun();
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [language, handleRun, openSubmitModal]);
+
+  const previewCode = useMemo(() => {
+    // For Java, codeRef holds the serialized JSON workspace — useless to show
+    // raw. Render it as readable source with file separators instead, and
+    // measure lines/chars against the readable form (which is what the
+    // student actually thinks of as "their code").
+    let text = codeRef.current || '';
+    if (language === 'java' && javaWorkspaceRef.current) {
+      const ws = javaWorkspaceRef.current;
+      const names = Object.keys(ws.files).sort();
+      // Make sure the active file reflects whatever is currently in the editor,
+      // not the last persisted value, when the modal opens.
+      const liveActive = editorRef.current?.getValue() ?? ws.files[ws.active];
+      text = names
+        .map((name) => {
+          const body = name === ws.active ? liveActive : ws.files[name];
+          return `// ── ${name} ──\n${body}`;
+        })
+        .join('\n\n');
+    }
+    const trimmed = text.length > 2000 ? text.slice(0, 2000) + '\n…' : text;
+    const lines = text.split('\n').length;
+    const chars = text.length;
+    return { text: trimmed, lines, chars };
+  }, [showSubmitModal, language]); // recompute when modal opens
+
+  const newFileValidation = useMemo(() => {
+    const trimmed = newFileName.trim().replace(/\.java$/i, '');
+    if (!trimmed) return { state: 'empty' as const };
+    if (!JAVA_CLASS_NAME.test(trimmed)) {
+      return { state: 'invalid' as const, message: 'Use letters, digits, _ or $. Don\'t start with a digit.' };
+    }
+    const fileName = `${trimmed}.java`;
+    if (javaWorkspace && fileName in javaWorkspace.files) {
+      return { state: 'invalid' as const, message: `${fileName} already exists.` };
+    }
+    return { state: 'valid' as const, fileName };
+  }, [newFileName, javaWorkspace]);
+
+  const langLabel = LANG_LABEL[language] ?? language;
+  const flagSummary = tabSwitches + pasteCount + flagCount;
+  const monitorTone =
+    flagCount > 0 ? 'danger' : pasteCount + tabSwitches > 0 ? 'warning' : 'calm';
+
+  if (sessionEnded && !showSubmittedSuccess) {
     return (
       <div className={styles.overlay}>
         <div className={styles.overlayCard}>
@@ -473,31 +654,44 @@ export default function StudentIDE() {
     );
   }
 
+  const compileEligible = ['java', 'python', 'cpp'].includes(language);
+  const actionLockReason = submittedAt ? 'Already submitted' : status === 'ended' ? 'Session ended' : null;
+
   return (
     <div className={styles.page}>
       {fullscreenWarning && (
         <div className={styles.warning}>
-          ⚠ Tab switch detected — this has been flagged for your lecturer.
-          <button onClick={() => setFullscreenWarning(false)}>Dismiss</button>
+          <span>⚠ Tab switch detected — flagged for your lecturer.</span>
+          <button type="button" onClick={() => setFullscreenWarning(false)}>Dismiss</button>
         </div>
       )}
 
       <header className={styles.header}>
         <div className={styles.headerLeft}>
-          <span className={styles.logo}>⬡ Oreos</span>
-          <span className={`badge ${status === 'active' ? 'badge-green' : 'badge-yellow'}`}>{status === 'active' ? 'Session active' : 'Waiting to start'}</span>
-        </div>
-
-        <div className={styles.headerCenter}>
-          {session?.name && <span className={styles.sessionName}>{session.name}</span>}
+          <div className={styles.brand}>
+            <span className={styles.logoMark} aria-hidden>⬡</span>
+            <span className={styles.logoText}>Oreos</span>
+          </div>
+          <div className={styles.sessionMeta}>
+            <span className={styles.sessionName}>{session?.name ?? 'Session'}</span>
+            <span className={styles.sessionSub}>
+              <span className={`${styles.statusDot} ${status === 'active' ? styles.statusDotActive : styles.statusDotWait}`} />
+              {status === 'active' ? 'Live' : status === 'ended' ? 'Ended' : 'Waiting to start'}
+              <span className={styles.dotSep}>·</span>
+              {langLabel}
+            </span>
+          </div>
         </div>
 
         <div className={styles.headerRight}>
-          <div className={styles.monitorStats}>
-            {tabSwitches > 0 && <span className="badge badge-red">↗ {tabSwitches} tab switches</span>}
-            {pasteCount > 0 && <span className="badge badge-yellow">📋 {pasteCount} pastes</span>}
-            {flagCount > 0 && <span className="badge badge-red">⚑ {flagCount} flags</span>}
-          </div>
+          <span
+            className={`${styles.activity} ${styles[`activity_${monitorTone}`]}`}
+            title={`${tabSwitches} tab switch${tabSwitches === 1 ? '' : 'es'} · ${pasteCount} paste${pasteCount === 1 ? '' : 's'} · ${flagCount} other flag${flagCount === 1 ? '' : 's'}`}
+          >
+            <span className={styles.activityPulse} aria-hidden />
+            {flagSummary === 0 ? 'Activity tracked' : `${flagSummary} flag${flagSummary === 1 ? '' : 's'}`}
+          </span>
+
           <select
             value={language}
             onChange={e => {
@@ -519,7 +713,8 @@ export default function StudentIDE() {
               setLanguage(nextLang);
             }}
             className={styles.langSelect}
-            disabled={!!constraints.language}
+            disabled={!!constraints.language || !!submittedAt}
+            aria-label="Language"
           >
             <option value="javascript">JavaScript</option>
             <option value="python">Python</option>
@@ -528,35 +723,54 @@ export default function StudentIDE() {
             <option value="cpp">C++</option>
             <option value="c">C</option>
           </select>
-          {['java', 'python', 'cpp'].includes(language) && (
+
+          <div className={styles.headerDivider} />
+
+          {compileEligible && (
             <>
-              <button className="btn btn-ghost" onClick={handleCompile} disabled={compiling || running}>
-                {compiling ? 'Compiling...' : `Compile ${language === 'cpp' ? 'C++' : language[0].toUpperCase() + language.slice(1)}`}
+              <button
+                className={`btn btn-ghost ${styles.runBtn}`}
+                onClick={handleCompile}
+                disabled={compiling || running || !!submittedAt}
+              >
+                {compiling ? 'Compiling…' : 'Compile'}
               </button>
-              {['java', 'python', 'cpp'].includes(language) && (
-                <button className="btn btn-primary" onClick={handleRun} disabled={running || compiling}>
-                  {running ? 'Running...' : `Run ${language === 'cpp' ? 'C++' : language[0].toUpperCase() + language.slice(1)}`}
-                </button>
-              )}
+              <button
+                className={`btn btn-primary ${styles.runBtn}`}
+                onClick={handleRun}
+                disabled={running || compiling || !!submittedAt}
+                title={`Run · ${modKey} ↵`}
+              >
+                {running ? 'Running…' : '▶ Run'}
+              </button>
             </>
           )}
-          <span className={styles.monitorBadge}>🔴 Monitored</span>
+
+          <button
+            className={`btn ${submittedAt ? 'btn-ghost' : 'btn-success'} ${styles.submitBtn}`}
+            onClick={openSubmitModal}
+            disabled={submitting || !!submittedAt || status === 'ended'}
+            title={actionLockReason ?? `Submit · ${modKey} ⇧ ↵`}
+          >
+            {submittedAt ? '✓ Submitted' : submitting ? 'Submitting…' : 'Submit work'}
+          </button>
         </div>
       </header>
 
-      {status === 'waiting' && (
+      {status === 'waiting' && !submittedAt && (
         <div className={styles.waitingBanner}>
-          ⏳ Your lecturer hasn't started the session yet. You can begin writing — it will be recorded once the session starts.
+          <span className={styles.waitingDot} />
+          Your lecturer hasn't started the session yet. You can warm up — anything you type is recorded once it starts.
         </div>
       )}
 
       <div className={styles.workspace}>
         {questions.length > 0 && (
           <aside className={styles.questionsPanel}>
-            <h3 className={styles.questionsTitle}>Questions</h3>
+            <div className={styles.panelKicker}>Brief</div>
             {questions.map((q, i) => (
               <div key={i} className={styles.questionItem}>
-                <span className={styles.questionNum}>Q{i + 1}</span>
+                <span className={styles.questionNum}>Question {i + 1}</span>
                 <p className={styles.questionText}>{q}</p>
               </div>
             ))}
@@ -565,9 +779,15 @@ export default function StudentIDE() {
         {language === 'java' && javaWorkspace && (
           <aside className={styles.filesPanel}>
             <div className={styles.filesHeader}>
-              <span>Files</span>
-              <button type="button" className={styles.filesAdd} onClick={addJavaFile} title="Add Java file">
-                +
+              <span className={styles.panelKicker}>Java files</span>
+              <button
+                type="button"
+                className={styles.filesAdd}
+                onClick={openAddJavaFile}
+                disabled={!!submittedAt}
+                title={submittedAt ? 'Cannot add files after submitting' : 'New Java file'}
+              >
+                + New
               </button>
             </div>
             <div className={styles.filesList}>
@@ -577,14 +797,16 @@ export default function StudentIDE() {
                   className={`${styles.fileTab} ${fileName === javaWorkspace.active ? styles.fileTabActive : ''}`}
                 >
                   <button type="button" className={styles.fileTabBtn} onClick={() => switchJavaFile(fileName)}>
+                    <span className={styles.fileTabIcon} aria-hidden>{'{}'}</span>
                     {fileName}
                   </button>
-                  {Object.keys(javaWorkspace.files).length > 1 && (
+                  {Object.keys(javaWorkspace.files).length > 1 && !submittedAt && (
                     <button
                       type="button"
                       className={styles.fileRemove}
                       onClick={() => removeJavaFile(fileName)}
                       title={`Remove ${fileName}`}
+                      aria-label={`Remove ${fileName}`}
                     >
                       ×
                     </button>
@@ -592,6 +814,9 @@ export default function StudentIDE() {
                 </div>
               ))}
             </div>
+            <p className={styles.filesHint}>
+              Helper classes live here. Your <code>main</code> stays in <code>Main.java</code>.
+            </p>
           </aside>
         )}
         <div className={styles.editorWrap}>
@@ -610,23 +835,35 @@ export default function StudentIDE() {
               tabSize: 2,
               automaticLayout: true,
               contextmenu: false,
+              padding: { top: 16, bottom: 16 },
+              fontLigatures: true,
             }}
           />
         </div>
       </div>
-      {['java', 'python', 'cpp'].includes(language) && showPanel && (
+
+      {compileEligible && showPanel && (
         <div className={styles.bottomPanel}>
           <div className={styles.panelHeader}>
-            <span className={styles.panelTitle}>Terminal</span>
-            <button className={styles.panelClose} onClick={() => setShowPanel(false)}>&times;</button>
+            <span className={styles.panelTitle}>
+              <span className={styles.terminalDot} />
+              Terminal · {langLabel}
+            </span>
+            <button
+              className={styles.panelClose}
+              onClick={() => setShowPanel(false)}
+              aria-label="Close terminal"
+            >
+              ×
+            </button>
           </div>
           <div className={styles.panelBody}>
             <div className={styles.stdinWrap}>
-              <label className={styles.stdinLabel}>Input (stdin)</label>
+              <label className={styles.stdinLabel}>Standard input</label>
               <textarea
                 value={stdinText}
                 onChange={(e) => setStdinText(e.target.value)}
-                placeholder={'Enter input lines here...\nExample:\n5\n1 2 3 4 5'}
+                placeholder={'5\n1 2 3 4 5'}
                 className={styles.stdinInput}
                 rows={3}
               />
@@ -641,9 +878,140 @@ export default function StudentIDE() {
       )}
 
       <footer className={styles.footer}>
-        <span>📡 Connected</span>
-        <span>{user?.name}</span>
+        <span className={styles.footerLeft}>
+          <span className={styles.footerDot} /> Synced live
+        </span>
+        <span className={styles.footerRight}>
+          <span>{user?.name}</span>
+          <span className={styles.footerHotkey}>
+            <Kbd>{modKey}</Kbd> <Kbd>↵</Kbd> run · <Kbd>{modKey}</Kbd> <Kbd>⇧</Kbd> <Kbd>↵</Kbd> submit
+          </span>
+        </span>
       </footer>
+
+      {/* ─── Submit confirmation modal ─────────────────────────────────────── */}
+      <Modal
+        open={showSubmitModal}
+        onClose={() => !submitting && setShowSubmitModal(false)}
+        title="Submit your work?"
+        subtitle="This is final. Your lecturer will be notified and the editor will lock."
+        size="md"
+        closeOnBackdrop={!submitting}
+        footer={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={() => setShowSubmitModal(false)} disabled={submitting}>
+              Keep editing
+            </button>
+            <button type="button" className="btn btn-success" onClick={confirmSubmit} disabled={submitting}>
+              {submitting ? 'Submitting…' : 'Confirm submit'}
+            </button>
+          </>
+        }
+      >
+        <div className={styles.submitSummary}>
+          <div className={styles.submitStat}>
+            <span className={styles.submitStatLabel}>Language</span>
+            <span className={styles.submitStatValue}>{langLabel}</span>
+          </div>
+          <div className={styles.submitStat}>
+            <span className={styles.submitStatLabel}>Lines</span>
+            <span className={styles.submitStatValue}>{previewCode.lines}</span>
+          </div>
+          <div className={styles.submitStat}>
+            <span className={styles.submitStatLabel}>Characters</span>
+            <span className={styles.submitStatValue}>{previewCode.chars.toLocaleString()}</span>
+          </div>
+        </div>
+        <pre className={styles.submitPreview}>{previewCode.text || '(empty)'}</pre>
+        {submitError && <div className={styles.submitInlineError}>⚠ {submitError}</div>}
+      </Modal>
+
+      {/* ─── Add Java file modal ───────────────────────────────────────────── */}
+      <Modal
+        open={showAddFileModal}
+        onClose={() => setShowAddFileModal(false)}
+        title="New Java file"
+        subtitle="One class per file. We'll add the .java extension for you."
+        size="sm"
+        footer={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={() => setShowAddFileModal(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={newFileValidation.state !== 'valid'}
+              onClick={() => {
+                const result = commitAddJavaFile(newFileName);
+                if (result.ok) {
+                  setShowAddFileModal(false);
+                  toast.success('File created', `${newFileName.trim().replace(/\.java$/i, '')}.java is now active.`);
+                } else {
+                  toast.error('Couldn\'t create file', result.reason);
+                }
+              }}
+            >
+              Create file
+            </button>
+          </>
+        }
+      >
+        <input
+          className={styles.fileNameInput}
+          value={newFileName}
+          onChange={(e) => setNewFileName(e.target.value)}
+          placeholder="e.g. Node, BinaryTree, Solver"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && newFileValidation.state === 'valid') {
+              e.preventDefault();
+              const result = commitAddJavaFile(newFileName);
+              if (result.ok) {
+                setShowAddFileModal(false);
+                toast.success('File created', `${newFileName.trim().replace(/\.java$/i, '')}.java is now active.`);
+              }
+            }
+          }}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <div className={styles.fileNameHint}>
+          {newFileValidation.state === 'empty' && <span className={styles.hintNeutral}>Pick a class name. PascalCase by convention.</span>}
+          {newFileValidation.state === 'invalid' && <span className={styles.hintError}>⚠ {newFileValidation.message}</span>}
+          {newFileValidation.state === 'valid' && (
+            <span className={styles.hintOk}>✓ Will create <code>{newFileValidation.fileName}</code></span>
+          )}
+        </div>
+      </Modal>
+
+      {/* ─── Submission success overlay ────────────────────────────────────── */}
+      {showSubmittedSuccess && submittedAt && (
+        <div className={styles.overlay}>
+          <div className={styles.successCard}>
+            <div className={styles.successIcon}>✓</div>
+            <h2 className={styles.successTitle}>Submitted</h2>
+            <p className={styles.successText}>
+              We recorded your work at <strong>{new Date(submittedAt).toLocaleTimeString()}</strong>.<br />
+              Your lecturer will review it. You can close this tab safely.
+            </p>
+            <div className={styles.successStats}>
+              <span>{langLabel}</span>
+              <span className={styles.dotSep}>·</span>
+              <span>{previewCode.lines} {previewCode.lines === 1 ? 'line' : 'lines'}</span>
+              <span className={styles.dotSep}>·</span>
+              <span>{previewCode.chars.toLocaleString()} {previewCode.chars === 1 ? 'char' : 'chars'}</span>
+            </div>
+            <div className={styles.successActions}>
+              <button className="btn btn-ghost" onClick={() => setShowSubmittedSuccess(false)}>
+                Review submission
+              </button>
+              <button className="btn btn-primary" onClick={() => navigate('/student')}>
+                Back to lobby
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

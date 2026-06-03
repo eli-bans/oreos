@@ -52,6 +52,11 @@ router.get('/:id/workspace', requireAuth, (req, res) => {
   const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id);
   if (!session) return res.status(404).json({ error: 'Not found' });
 
+  const submission = db.prepare(`
+    SELECT content, language, ts FROM submissions
+    WHERE session_id = ? AND student_id = ?
+  `).get(req.params.id, req.user.id);
+
   const snap = db.prepare(`
     SELECT content, language, ts FROM snapshots
     WHERE session_id = ? AND student_id = ?
@@ -64,6 +69,7 @@ router.get('/:id/workspace', requireAuth, (req, res) => {
       language: snap.language,
       hasSavedWork: true,
       savedAt: snap.ts,
+      submittedAt: submission?.ts,
     });
   }
 
@@ -83,6 +89,7 @@ router.get('/:id/workspace', requireAuth, (req, res) => {
           content: data.fullCode,
           language: data.language || constraints.language || 'javascript',
           hasSavedWork: true,
+          submittedAt: submission?.ts,
         });
       }
     } catch {
@@ -95,7 +102,67 @@ router.get('/:id/workspace', requireAuth, (req, res) => {
     content: '',
     language: constraints.language || 'javascript',
     hasSavedWork: false,
+    submittedAt: submission?.ts,
   });
+});
+
+// Student: submit their final work for this session
+router.post('/:id/submit', requireAuth, (req, res) => {
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (session.status === 'ended') return res.status(400).json({ error: 'Session has ended' });
+
+  const existing = db.prepare('SELECT ts FROM submissions WHERE session_id = ? AND student_id = ?')
+    .get(req.params.id, req.user.id);
+  if (existing) return res.status(409).json({ error: 'Already submitted', submittedAt: existing.ts });
+
+  const content = String(req.body?.content ?? '');
+  if (!content.trim()) return res.status(400).json({ error: 'Cannot submit empty work' });
+  const constraints = JSON.parse(session.constraints || '{}');
+  const language = String(req.body?.language || constraints.language || 'javascript');
+  const ts = Date.now();
+
+  db.prepare(`
+    INSERT INTO submissions (id, session_id, student_id, content, language, ts)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(uuid(), req.params.id, req.user.id, content, language, ts);
+
+  // Also save a snapshot so the lecturer's live view reflects the final state.
+  db.prepare(`
+    INSERT INTO snapshots (id, session_id, student_id, content, language, ts)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(uuid(), req.params.id, req.user.id, content, language, ts);
+
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`lecturer:${req.params.id}`).emit('student:submitted', {
+      studentId: req.user.id,
+      name: req.user.name,
+      ts,
+      language,
+    });
+    io.to(`lecturer:${req.params.id}`).emit('student:code_update', {
+      studentId: req.user.id,
+      code: content,
+      language,
+      ts,
+    });
+  }
+
+  res.json({ ok: true, submittedAt: ts });
+});
+
+// Lecturer: list submissions for a session
+router.get('/:id/submissions', requireAuth, requireRole('lecturer'), (req, res) => {
+  const session = db.prepare('SELECT id FROM sessions WHERE id = ? AND lecturer_id = ?')
+    .get(req.params.id, req.user.id);
+  if (!session) return res.status(404).json({ error: 'Not found' });
+  const rows = db.prepare(`
+    SELECT s.student_id, s.content, s.language, s.ts, u.name as student_name, u.email as student_email
+    FROM submissions s JOIN users u ON u.id = s.student_id
+    WHERE s.session_id = ? ORDER BY s.ts DESC
+  `).all(req.params.id);
+  res.json(rows);
 });
 
 // Get single session
@@ -143,11 +210,12 @@ router.get('/:id/participants', requireAuth, requireRole('lecturer'), (req, res)
     SELECT u.id, u.name, u.email, p.joined_at,
       (SELECT content FROM snapshots WHERE session_id = ? AND student_id = u.id ORDER BY ts DESC LIMIT 1) as latest_code,
       (SELECT language FROM snapshots WHERE session_id = ? AND student_id = u.id ORDER BY ts DESC LIMIT 1) as language,
-      (SELECT COUNT(*) FROM flags WHERE session_id = ? AND student_id = u.id) as flag_count
+      (SELECT COUNT(*) FROM flags WHERE session_id = ? AND student_id = u.id) as flag_count,
+      (SELECT ts FROM submissions WHERE session_id = ? AND student_id = u.id) as submitted_at
     FROM participants p
     JOIN users u ON u.id = p.student_id
     WHERE p.session_id = ?
-  `).all(req.params.id, req.params.id, req.params.id, req.params.id);
+  `).all(req.params.id, req.params.id, req.params.id, req.params.id, req.params.id);
   res.json(participants);
 });
 

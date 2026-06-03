@@ -64,9 +64,20 @@ db.exec(`
     ts INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS submissions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    student_id TEXT NOT NULL REFERENCES users(id),
+    content TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'javascript',
+    ts INTEGER NOT NULL,
+    UNIQUE(session_id, student_id)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_events_session_student ON events(session_id, student_id);
   CREATE INDEX IF NOT EXISTS idx_snapshots_session_student ON snapshots(session_id, student_id);
   CREATE INDEX IF NOT EXISTS idx_flags_session ON flags(session_id);
+  CREATE INDEX IF NOT EXISTS idx_submissions_session ON submissions(session_id);
 `);
 
 try {

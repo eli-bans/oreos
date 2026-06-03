@@ -95,16 +95,21 @@ async function compileJavaProject(input, { timeoutMs = 10000 } = {}) {
       await fs.writeFile(path.join(tempDir, file.name), file.source, 'utf8');
     }
     const javaPaths = files.map((f) => path.join(tempDir, f.name));
-    const { stdout, stderr } = await execFileAsync('javac', javaPaths, { timeout: timeoutMs });
+    const env = { ...process.env, NO_COLOR: '1', TERM: 'dumb' };
+    const { stdout, stderr } = await execFileAsync('javac', javaPaths, { timeout: timeoutMs, env });
     const className = resolveMainClassName(files);
+    const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
+    const strip = (t) => String(t || '').replace(ANSI_RE, '');
     return {
       className,
       tempDir,
-      compileOutput: (stdout || stderr || '').trim(),
+      compileOutput: strip((stdout || stderr || '')).trim(),
     };
   } catch (error) {
     await fs.rm(tempDir, { recursive: true, force: true });
-    const output = (error?.stderr || error?.stdout || error?.message || 'Compilation failed').trim();
+    const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
+    const strip = (t) => String(t || '').replace(ANSI_RE, '');
+    const output = strip(error?.stderr || error?.stdout || error?.message || 'Compilation failed').trim();
     const err = new Error(output);
     err.output = output;
     throw err;

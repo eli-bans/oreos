@@ -39,9 +39,18 @@ export const api = {
     request<Session>(`/sessions/${id}`),
 
   getMyWorkspace: (sessionId: string) =>
-    request<{ content: string; language: string; hasSavedWork: boolean; savedAt?: number }>(
+    request<{ content: string; language: string; hasSavedWork: boolean; savedAt?: number; submittedAt?: number }>(
       `/sessions/${sessionId}/workspace`
     ),
+
+  submitWork: (sessionId: string, body: { content: string; language: string }) =>
+    request<{ ok: boolean; submittedAt: number }>(`/sessions/${sessionId}/submit`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  getSubmissions: (sessionId: string) =>
+    request<Submission[]>(`/sessions/${sessionId}/submissions`),
 
   updateSession: (id: string, body: Partial<{ status: string; constraints: Constraints; questions: string[] }>) =>
     request<Session>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
@@ -134,6 +143,16 @@ export interface Participant {
   latest_code?: string;
   language?: string;
   flag_count: number;
+  submitted_at?: number;
+}
+
+export interface Submission {
+  student_id: string;
+  student_name: string;
+  student_email: string;
+  content: string;
+  language: string;
+  ts: number;
 }
 
 export interface ReplayData {
