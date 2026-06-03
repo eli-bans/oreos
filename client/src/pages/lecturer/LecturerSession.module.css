@@ -375,6 +375,59 @@
 .liveSubRed   { color: var(--red); font-weight: 500; }
 .dotSep { color: var(--text-3); opacity: 0.5; }
 
+/* File tab strip in the lecturer live view (mirrors the student IDE) */
+.liveFileTabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  height: 36px;
+  overflow-x: auto;
+}
+.liveFileTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-2);
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+.liveFileTab:hover { background: var(--bg-raised); color: var(--text-1); }
+.liveFileTabActive {
+  background: var(--bg-surface);
+  border-color: var(--border);
+  color: var(--text-1);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.liveFileTabIcon { color: var(--text-3); font-size: 11px; }
+.liveFileTabActive .liveFileTabIcon { color: var(--accent); }
+
+.liveDownload {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+.liveDownload:hover { background: var(--accent); color: white; border-color: var(--accent); }
+
 /* Empty waiting state */
 .waitingState {
   flex: 1;

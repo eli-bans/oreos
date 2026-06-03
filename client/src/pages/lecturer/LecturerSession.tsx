@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
+import JSZip from 'jszip';
 import { api, Flag, Participant, Session } from '@/lib/api';
-import { formatJavaWorkspaceForDisplay } from '@/lib/javaWorkspace';
+import { formatJavaWorkspaceForDisplay, parseJavaWorkspace } from '@/lib/javaWorkspace';
 import { getSocket } from '@/lib/socket';
 import { questionsFromText, questionsToText } from '@/lib/questions';
 import { toast } from '@/components/Toaster';
@@ -48,6 +49,7 @@ export default function LecturerSession() {
   const [filter, setFilter] = useState<StudentFilter>('all');
   const [questionsText, setQuestionsText] = useState('');
   const [questionsSaving, setQuestionsSaving] = useState(false);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
   const socketRef = useRef(getSocket());
 
   useEffect(() => {
@@ -195,8 +197,81 @@ export default function LecturerSession() {
     }
   };
 
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadSubmission = async (student: LiveStudent) => {
+    const slug = student.name.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '') || 'student';
+    const lang = student.language || 'txt';
+    const extByLang: Record<string, string> = {
+      java: 'java', python: 'py', javascript: 'js', typescript: 'ts', cpp: 'cpp', c: 'c',
+    };
+
+    // Java workspace → real .zip with each file at its real name
+    if (lang === 'java') {
+      const ws = parseJavaWorkspace(student.code || '');
+      const names = ws ? Object.keys(ws.files) : [];
+      if (ws && names.length > 1) {
+        const zip = new JSZip();
+        const folder = zip.folder(`${slug}_submission`);
+        if (!folder) return;
+        for (const [name, source] of Object.entries(ws.files)) {
+          folder.file(name, source);
+        }
+        // Include a small manifest so the grader knows which class has main()
+        folder.file('SUBMISSION.txt',
+          `Student: ${student.name} <${student.email}>\n` +
+          `Language: Java\n` +
+          `Submitted: ${student.submitted_at ? new Date(student.submitted_at).toISOString() : '(in progress)'}\n` +
+          `Active file at submission: ${ws.active}\n` +
+          `Files: ${names.join(', ')}\n`
+        );
+        const blob = await zip.generateAsync({ type: 'blob' });
+        triggerDownload(blob, `${slug}_submission.zip`);
+        toast.success('Downloaded', `${names.length} files in ${slug}_submission.zip`);
+        return;
+      }
+      // Single-file Java (or unparsable) — write a plain Main.java
+      const single = ws && names.length === 1 ? ws.files[names[0]] : (student.code || '');
+      const fname = ws && names.length === 1 ? names[0] : 'Main.java';
+      triggerDownload(new Blob([single], { type: 'text/x-java-source' }), `${slug}_${fname}`);
+      toast.success('Downloaded', `${slug}_${fname}`);
+      return;
+    }
+
+    // Non-Java: single source file with appropriate extension
+    const ext = extByLang[lang] ?? 'txt';
+    triggerDownload(
+      new Blob([student.code || ''], { type: 'text/plain' }),
+      `${slug}_submission.${ext}`
+    );
+    toast.success('Downloaded', `${slug}_submission.${ext}`);
+  };
+
   const focusedStudent = focused ? students.get(focused) : null;
   const studentList = useMemo(() => Array.from(students.values()), [students]);
+
+  // Parse the focused student's Java workspace (if any) so we can render
+  // file tabs instead of one concatenated dump.
+  const focusedJava = useMemo(() => {
+    if (!focusedStudent || focusedStudent.language !== 'java') return null;
+    const ws = parseJavaWorkspace(focusedStudent.code || '');
+    return ws;
+  }, [focusedStudent]);
+
+  // Reset active file when switching students or when files appear/disappear.
+  useEffect(() => {
+    if (!focusedJava) { setActiveFile(null); return; }
+    const names = Object.keys(focusedJava.files);
+    if (activeFile && names.includes(activeFile)) return;
+    setActiveFile(names.includes('Main.java') ? 'Main.java' : names.sort()[0] ?? null);
+  }, [focusedJava, activeFile]);
 
   const stats = useMemo(() => {
     let online = 0;
@@ -465,18 +540,47 @@ export default function LecturerSession() {
                 <button
                   className="btn btn-ghost"
                   style={{ padding: '6px 12px', fontSize: '12.5px' }}
+                  onClick={() => downloadSubmission(focusedStudent)}
+                  title={
+                    focusedJava && Object.keys(focusedJava.files).length > 1
+                      ? `Download as ${Object.keys(focusedJava.files).length}-file .zip`
+                      : 'Download submission'
+                  }
+                >
+                  ⬇ Download
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  style={{ padding: '6px 12px', fontSize: '12.5px' }}
                   onClick={() => navigate(`/lecturer/session/${id}/replay/${focusedStudent.id}`)}
                 >
                   ▶ Replay session
                 </button>
               </div>
+              {focusedJava && Object.keys(focusedJava.files).length > 0 && (
+                <div className={styles.liveFileTabs}>
+                  {Object.keys(focusedJava.files).sort().map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => setActiveFile(name)}
+                      className={`${styles.liveFileTab} ${name === activeFile ? styles.liveFileTabActive : ''}`}
+                    >
+                      <span className={styles.liveFileTabIcon} aria-hidden>{'{}'}</span>
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              )}
               <Editor
-                height="calc(100% - 56px)"
+                height={focusedJava ? 'calc(100% - 56px - 36px)' : 'calc(100% - 56px)'}
                 language={focusedStudent.language}
                 value={
-                  focusedStudent.language === 'java'
-                    ? formatJavaWorkspaceForDisplay(focusedStudent.code)
-                    : focusedStudent.code || '// Student has not written anything yet'
+                  focusedJava && activeFile
+                    ? focusedJava.files[activeFile] ?? ''
+                    : focusedStudent.language === 'java'
+                      ? formatJavaWorkspaceForDisplay(focusedStudent.code)
+                      : focusedStudent.code || '// Student has not written anything yet'
                 }
                 theme="vs-dark"
                 options={{
