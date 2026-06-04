@@ -422,9 +422,7 @@ export default function StudentIDE() {
         return;
       }
 
-      // Tiny pastes (auto-complete selections, single tokens) aren't worth flagging
-      if (pastedText.trim().length < 15) return;
-
+      // Anything pasted from outside this session is flagged, regardless of length
       emitFlag('paste', `Pasted ${pastedText.length} chars`);
       setPasteCount(p => p + 1);
     };
