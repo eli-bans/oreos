@@ -112,6 +112,10 @@ export default function StudentIDE() {
   const idleFlaggedRef = useRef(false);
   const hasStartedTypingRef = useRef(false);
   const pendingEditorContentRef = useRef<string | null>(null);
+  // Tracks the most recent text the student copied from within this page so
+  // we can tell the difference between "moving my own code" (not suspicious)
+  // and "pasting from an external source" (suspicious).
+  const ownClipboardRef = useRef<string>('');
 
   const syncCodeRef = useCallback((content: string, workspace: JavaWorkspace | null) => {
     javaWorkspaceRef.current = workspace;
@@ -372,17 +376,55 @@ export default function StudentIDE() {
     editor.onKeyDown((e) => {
       const key = e.browserEvent.key.toLowerCase();
       const mod = e.browserEvent.ctrlKey || e.browserEvent.metaKey;
-      if (mod && (key === 'v' || key === 'c' || key === 'x')) {
+      // Only flag Ctrl+V (paste from external source). Ctrl+C and Ctrl+X are
+      // normal coding — the paste handler already distinguishes self vs external.
+      if (mod && key === 'v') {
         emitFlagRef.current('clipboard_shortcut', `Shortcut: ${key.toUpperCase()}`);
       }
     });
   };
 
-  // ─── Paste interception (always allowed, always flagged) ────────────────────
+  // ─── Copy tracking — record what the student copies from within the page ────
+  useEffect(() => {
+    const handleCopy = (e: ClipboardEvent) => {
+      const copied = e.clipboardData?.getData('text') ?? window.getSelection()?.toString() ?? '';
+      if (copied) ownClipboardRef.current = copied;
+    };
+    // Also intercept cut so moving code around doesn't flag either
+    const handleCut = (e: ClipboardEvent) => {
+      const cut = e.clipboardData?.getData('text') ?? window.getSelection()?.toString() ?? '';
+      if (cut) ownClipboardRef.current = cut;
+    };
+    document.addEventListener('copy', handleCopy, true);
+    document.addEventListener('cut', handleCut, true);
+    return () => {
+      document.removeEventListener('copy', handleCopy, true);
+      document.removeEventListener('cut', handleCut, true);
+    };
+  }, []);
+
+  // ─── Paste interception ───────────────────────────────────────────────────
+  // Always allowed. Only flagged when the pasted text is NOT something the
+  // student already copied from within this same session. This prevents
+  // "moved my own code" from drowning out real integrity events.
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       const pastedText = e.clipboardData?.getData('text') ?? '';
+      if (!pastedText) return;
+
+      // Always record the event on the timeline
       emitEvent('paste', { length: pastedText.length });
+
+      const isSelfPaste = pastedText === ownClipboardRef.current;
+
+      if (isSelfPaste) {
+        // Student is rearranging their own code — log it but don't flag
+        return;
+      }
+
+      // Tiny pastes (auto-complete selections, single tokens) aren't worth flagging
+      if (pastedText.trim().length < 15) return;
+
       emitFlag('paste', `Pasted ${pastedText.length} chars`);
       setPasteCount(p => p + 1);
     };
@@ -408,14 +450,17 @@ export default function StudentIDE() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [emitEvent, emitFlag]);
 
-  // ─── Window blur / focus monitoring ─────────────────────────────────────────
+  // ─── Window blur monitoring ───────────────────────────────────────────────────
+  // Recorded on the timeline for replay context but NOT counted as a flag.
+  // visibilitychange already flags the tab switch; blur is a duplicate signal
+  // from the same action and was causing one switch to show as 2-3 flags.
   useEffect(() => {
     const handleBlur = () => {
-      emitFlag('window_blur', 'Window lost focus');
+      emitEvent('window_blur', {});
     };
     window.addEventListener('blur', handleBlur);
     return () => window.removeEventListener('blur', handleBlur);
-  }, [emitFlag]);
+  }, [emitEvent]);
 
   // ─── Heartbeat + idle tracking ───────────────────────────────────────────────
   // Idle is only meaningful AFTER the student has actually started writing.
