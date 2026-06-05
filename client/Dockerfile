@@ -15,4 +15,4 @@ COPY --from=builder /app/dist ./dist
 ENV PORT=3000
 EXPOSE 3000
 
-CMD ["sh", "-c", "serve dist -p ${PORT} --no-clipboard"]
+CMD ["sh", "-c", "serve dist -p ${PORT} --no-clipboard --single"]
