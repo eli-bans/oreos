@@ -90,6 +90,7 @@ export default function StudentIDE() {
   const [flagCount, setFlagCount] = useState(0);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [fullscreenWarning, setFullscreenWarning] = useState(false);
+  const [connected, setConnected] = useState(socketRef.current.connected);
   const [compileResult, setCompileResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [running, setRunning] = useState(false);
@@ -105,6 +106,7 @@ export default function StudentIDE() {
   const [showAddFileModal, setShowAddFileModal] = useState(false);
   const [newFileName, setNewFileName] = useState('');
 
+  const wasDisconnectedRef = useRef(false);
   const codeRef = useRef('');
   const javaWorkspaceRef = useRef<JavaWorkspace | null>(null);
   const lastSentRef = useRef(0);
@@ -278,6 +280,11 @@ export default function StudentIDE() {
     // On every (re)connect, re-join the room and push the latest full code so a
     // gap created while the socket was down is closed on the server immediately.
     const handleConnect = () => {
+      setConnected(true);
+      if (wasDisconnectedRef.current) {
+        wasDisconnectedRef.current = false;
+        toast.success('Back online', 'Your connection is restored and your work has synced.');
+      }
       socket.emit('student:join', { sessionId });
       if (!submittedRef.current) {
         socket.emit('student:keystroke', {
@@ -288,7 +295,20 @@ export default function StudentIDE() {
         });
       }
     };
+    const handleDisconnect = () => {
+      wasDisconnectedRef.current = true;
+      setConnected(false);
+      saveDraft(true);
+    };
+    // Browser-level offline fires faster than the socket's own timeout, so we
+    // listen to both and treat either as "you've lost connection".
+    const handleOffline = () => handleDisconnect();
+    const handleOnline = () => { if (socket.connected) handleConnect(); };
+
     socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
 
     socket.on('session:state', ({ status: s, constraints: c, questions: q }: { status: StatusKind; constraints: Constraints; questions?: string[] }) => {
       setStatus(s);
@@ -323,6 +343,9 @@ export default function StudentIDE() {
 
     return () => {
       socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
       socket.off('session:state');
       socket.off('session:constraints_updated');
       socket.off('session:questions_updated');
@@ -794,6 +817,16 @@ export default function StudentIDE() {
 
   return (
     <div className={styles.page}>
+      {!connected && (
+        <div className={styles.offlineBanner}>
+          <span className={styles.offlineDot} />
+          <span>
+            Connection lost — you’re offline. Your work is being saved on this device.
+            Keep this tab open; it will sync automatically when you’re back online.
+          </span>
+        </div>
+      )}
+
       {fullscreenWarning && (
         <div className={styles.warning}>
           <span>⚠ Tab switch detected — flagged for your lecturer.</span>
