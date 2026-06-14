@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import JSZip from 'jszip';
-import { api, Flag, Participant, Session } from '@/lib/api';
+import { api, Flag, Participant, Session, Submission } from '@/lib/api';
 import { formatJavaWorkspaceForDisplay, parseJavaWorkspace } from '@/lib/javaWorkspace';
 import { getSocket } from '@/lib/socket';
 import { questionsFromText, questionsToText } from '@/lib/questions';
@@ -43,10 +43,15 @@ export default function LecturerSession() {
   const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
   const [students, setStudents] = useState<Map<string, LiveStudent>>(new Map());
+  // Authoritative final copies from the submissions table, keyed by student id.
+  // These survive a network cut that may have left the live snapshots stale, so
+  // they take precedence over `student.code` (which is the throttled snapshot).
+  const [submissions, setSubmissions] = useState<Map<string, Submission>>(new Map());
   const [flags, setFlags] = useState<Flag[]>([]);
   const [focused, setFocused] = useState<string | null>(null);
   const [tab, setTab] = useState<'students' | 'flags' | 'questions'>('students');
   const [filter, setFilter] = useState<StudentFilter>('all');
+  const [search, setSearch] = useState('');
   const [questionsText, setQuestionsText] = useState('');
   const [questionsSaving, setQuestionsSaving] = useState(false);
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -68,6 +73,9 @@ export default function LecturerSession() {
       }])));
     });
     api.getFlags(id).then(setFlags);
+    api.getSubmissions(id).then(list => {
+      setSubmissions(new Map(list.map(s => [s.student_id, s])));
+    }).catch(() => { /* no submissions yet */ });
   }, [id, navigate]);
 
   useEffect(() => {
@@ -138,6 +146,11 @@ export default function LecturerSession() {
         if (s) m.set(studentId, { ...s, submitted_at: ts });
         return m;
       });
+      // Pull the authoritative submission content so the focused view and the
+      // Download button reflect exactly what was submitted, not the snapshot.
+      api.getSubmissions(id).then(list => {
+        setSubmissions(new Map(list.map(s => [s.student_id, s])));
+      }).catch(() => { /* ignore */ });
       toast.success(`${name} submitted`, new Date(ts).toLocaleTimeString());
     });
 
@@ -208,14 +221,15 @@ export default function LecturerSession() {
 
   const downloadSubmission = async (student: LiveStudent) => {
     const slug = student.name.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '') || 'student';
-    const lang = student.language || 'txt';
+    const code = codeFor(student);
+    const lang = langFor(student) || 'txt';
     const extByLang: Record<string, string> = {
       java: 'java', python: 'py', javascript: 'js', typescript: 'ts', cpp: 'cpp', c: 'c',
     };
 
     // Java workspace → real .zip with each file at its real name
     if (lang === 'java') {
-      const ws = parseJavaWorkspace(student.code || '');
+      const ws = parseJavaWorkspace(code || '');
       const names = ws ? Object.keys(ws.files) : [];
       if (ws && names.length > 1) {
         const zip = new JSZip();
@@ -238,7 +252,7 @@ export default function LecturerSession() {
         return;
       }
       // Single-file Java (or unparsable) — write a plain Main.java
-      const single = ws && names.length === 1 ? ws.files[names[0]] : (student.code || '');
+      const single = ws && names.length === 1 ? ws.files[names[0]] : (code || '');
       const fname = ws && names.length === 1 ? names[0] : 'Main.java';
       triggerDownload(new Blob([single], { type: 'text/x-java-source' }), `${slug}_${fname}`);
       toast.success('Downloaded', `${slug}_${fname}`);
@@ -248,11 +262,16 @@ export default function LecturerSession() {
     // Non-Java: single source file with appropriate extension
     const ext = extByLang[lang] ?? 'txt';
     triggerDownload(
-      new Blob([student.code || ''], { type: 'text/plain' }),
+      new Blob([code || ''], { type: 'text/plain' }),
       `${slug}_submission.${ext}`
     );
     toast.success('Downloaded', `${slug}_submission.${ext}`);
   };
+
+  // For a submitted student, the submissions row is the source of truth; fall
+  // back to the live snapshot (`student.code`) only while they're still working.
+  const codeFor = (s: LiveStudent) => submissions.get(s.id)?.content ?? s.code;
+  const langFor = (s: LiveStudent) => submissions.get(s.id)?.language ?? s.language;
 
   const focusedStudent = focused ? students.get(focused) : null;
   const studentList = useMemo(() => Array.from(students.values()), [students]);
@@ -260,10 +279,10 @@ export default function LecturerSession() {
   // Parse the focused student's Java workspace (if any) so we can render
   // file tabs instead of one concatenated dump.
   const focusedJava = useMemo(() => {
-    if (!focusedStudent || focusedStudent.language !== 'java') return null;
-    const ws = parseJavaWorkspace(focusedStudent.code || '');
+    if (!focusedStudent || langFor(focusedStudent) !== 'java') return null;
+    const ws = parseJavaWorkspace(codeFor(focusedStudent) || '');
     return ws;
-  }, [focusedStudent]);
+  }, [focusedStudent, submissions]);
 
   // Reset active file when switching students or when files appear/disappear.
   useEffect(() => {
@@ -286,13 +305,15 @@ export default function LecturerSession() {
   }, [studentList]);
 
   const filteredStudents = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return studentList.filter(s => {
-      if (filter === 'online') return s.online;
-      if (filter === 'submitted') return !!s.submitted_at;
-      if (filter === 'flagged') return (s.flag_count ?? 0) > 0;
+      if (filter === 'online' && !s.online) return false;
+      if (filter === 'submitted' && !s.submitted_at) return false;
+      if (filter === 'flagged' && (s.flag_count ?? 0) === 0) return false;
+      if (q && !s.name.toLowerCase().includes(q) && !s.email.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [studentList, filter]);
+  }, [studentList, filter, search]);
 
   if (!session) return <div className={styles.loading}>Loading…</div>;
 
@@ -401,6 +422,27 @@ export default function LecturerSession() {
 
           {tab === 'students' && (
             <>
+              <div className={styles.searchRow}>
+                <span className={styles.searchIcon} aria-hidden>⌕</span>
+                <input
+                  type="text"
+                  className={styles.searchInput}
+                  placeholder="Search by name or email"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  aria-label="Search students"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    className={styles.searchClear}
+                    onClick={() => setSearch('')}
+                    aria-label="Clear search"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
               <div className={styles.filterRow}>
                 {(['all', 'online', 'submitted', 'flagged'] as StudentFilter[]).map(f => {
                   const labels: Record<StudentFilter, string> = {
@@ -424,7 +466,9 @@ export default function LecturerSession() {
               <div className={styles.studentList}>
                 {filteredStudents.length === 0 && (
                   <p className={styles.empty}>
-                    {filter === 'all' ? 'No students yet' : `No ${filter} students`}
+                    {search.trim()
+                      ? `No students match "${search.trim()}"`
+                      : filter === 'all' ? 'No students yet' : `No ${filter} students`}
                   </p>
                 )}
                 {filteredStudents.map(s => (
@@ -520,7 +564,7 @@ export default function LecturerSession() {
                 <div className={styles.liveMeta}>
                   <span className={styles.liveTitle}>{focusedStudent.name}</span>
                   <span className={styles.liveSub}>
-                    {LANG_LABEL[focusedStudent.language] ?? focusedStudent.language}
+                    {LANG_LABEL[langFor(focusedStudent)] ?? langFor(focusedStudent)}
                     {focusedStudent.submitted_at && (
                       <>
                         <span className={styles.dotSep}>·</span>
@@ -574,13 +618,13 @@ export default function LecturerSession() {
               )}
               <Editor
                 height={focusedJava ? 'calc(100% - 56px - 36px)' : 'calc(100% - 56px)'}
-                language={focusedStudent.language}
+                language={langFor(focusedStudent)}
                 value={
                   focusedJava && activeFile
                     ? focusedJava.files[activeFile] ?? ''
-                    : focusedStudent.language === 'java'
-                      ? formatJavaWorkspaceForDisplay(focusedStudent.code)
-                      : focusedStudent.code || '// Student has not written anything yet'
+                    : langFor(focusedStudent) === 'java'
+                      ? formatJavaWorkspaceForDisplay(codeFor(focusedStudent))
+                      : codeFor(focusedStudent) || '// Student has not written anything yet'
                 }
                 theme="vs-dark"
                 options={{
@@ -624,12 +668,12 @@ export default function LecturerSession() {
                   </div>
                   <div className={styles.miniCode}>
                     <pre>
-                      {(s.language === 'java' ? formatJavaWorkspaceForDisplay(s.code) : s.code) ||
+                      {(langFor(s) === 'java' ? formatJavaWorkspaceForDisplay(codeFor(s)) : codeFor(s)) ||
                         '// no code yet'}
                     </pre>
                   </div>
                   <div className={styles.gridFooter}>
-                    <span className={styles.gridLang}>{LANG_LABEL[s.language] ?? s.language}</span>
+                    <span className={styles.gridLang}>{LANG_LABEL[langFor(s)] ?? langFor(s)}</span>
                     <span className={styles.gridOpen}>Open →</span>
                   </div>
                 </div>

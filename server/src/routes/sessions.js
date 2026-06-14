@@ -57,6 +57,19 @@ router.get('/:id/workspace', requireAuth, (req, res) => {
     WHERE session_id = ? AND student_id = ?
   `).get(req.params.id, req.user.id);
 
+  // The submission is the authoritative final copy: it was sent over HTTP with
+  // the student's complete local code, so it survives a network cut that may
+  // have left the live snapshots stale. Prefer it whenever it exists.
+  if (submission?.content) {
+    return res.json({
+      content: submission.content,
+      language: submission.language,
+      hasSavedWork: true,
+      savedAt: submission.ts,
+      submittedAt: submission.ts,
+    });
+  }
+
   const snap = db.prepare(`
     SELECT content, language, ts FROM snapshots
     WHERE session_id = ? AND student_id = ?

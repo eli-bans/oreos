@@ -193,6 +193,45 @@
 .flagCount { background: var(--red-dim); color: var(--red); }
 
 /* Filter pills */
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 12px 0;
+  padding: 0 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.searchRow:focus-within {
+  border-color: var(--accent);
+}
+.searchIcon {
+  font-size: 14px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.searchInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 7px 0;
+  font-size: 12.5px;
+  color: var(--text-1);
+}
+.searchInput::placeholder { color: var(--text-2); }
+.searchClear {
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.searchClear:hover { color: var(--text-1); }
+
 .filterRow {
   display: flex;
   gap: 6px;

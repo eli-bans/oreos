@@ -90,6 +90,7 @@ export default function StudentIDE() {
   const [flagCount, setFlagCount] = useState(0);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [fullscreenWarning, setFullscreenWarning] = useState(false);
+  const [connected, setConnected] = useState(socketRef.current.connected);
   const [compileResult, setCompileResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [running, setRunning] = useState(false);
@@ -105,6 +106,7 @@ export default function StudentIDE() {
   const [showAddFileModal, setShowAddFileModal] = useState(false);
   const [newFileName, setNewFileName] = useState('');
 
+  const wasDisconnectedRef = useRef(false);
   const codeRef = useRef('');
   const javaWorkspaceRef = useRef<JavaWorkspace | null>(null);
   const lastSentRef = useRef(0);
@@ -221,22 +223,48 @@ export default function StudentIDE() {
         setConstraints(s.constraints);
         setQuestions(s.questions ?? []);
         if (workspace.submittedAt) setSubmittedAt(workspace.submittedAt);
-        const lang = workspace.language || s.constraints.language || 'javascript';
+
+        let lang = workspace.language || s.constraints.language || 'javascript';
+        let savedContent = workspace.hasSavedWork && workspace.content ? workspace.content : '';
+        let recovered = false;
+
+        // Prefer a local draft when it's fresher than the server copy and the
+        // student hasn't submitted — recovers work that never synced (e.g. a
+        // network cut left the last edits stuck on the device).
+        if (!workspace.submittedAt && sessionId && user) {
+          try {
+            const raw = localStorage.getItem(`oreos_draft_${sessionId}_${user.id}`);
+            if (raw) {
+              const draft = JSON.parse(raw);
+              const serverTs = workspace.savedAt ?? 0;
+              const draftTs = draft?.ts ?? 0;
+              if (typeof draft?.content === 'string' && draft.content &&
+                  (!savedContent || draftTs > serverTs)) {
+                savedContent = draft.content;
+                if (draft.language) lang = draft.language;
+                recovered = !!savedContent && draftTs > serverTs;
+              }
+            }
+          } catch {
+            // malformed draft — ignore and fall back to the server copy
+          }
+        }
+
         setLanguage(lang);
 
         if (lang === 'java') {
-          const ws = workspace.hasSavedWork && workspace.content
-            ? legacyToJavaWorkspace(workspace.content, s.name)
+          const ws = savedContent
+            ? legacyToJavaWorkspace(savedContent, s.name)
             : createDefaultJavaWorkspace(s.name);
           setJavaWorkspace(ws);
           applyEditorContent(ws.files[ws.active], ws);
         } else {
           setJavaWorkspace(null);
-          const content =
-            workspace.hasSavedWork && workspace.content
-              ? workspace.content
-              : makeStarterComment(lang, s.name);
-          applyEditorContent(content);
+          applyEditorContent(savedContent || makeStarterComment(lang, s.name));
+        }
+
+        if (recovered) {
+          toast.info('Recovered unsaved work', 'Restored code saved on this device since your last sync.');
         }
       })
       .catch(() => navigate('/student'));
@@ -248,6 +276,39 @@ export default function StudentIDE() {
     const socket = socketRef.current;
 
     socket.emit('student:join', { sessionId });
+
+    // On every (re)connect, re-join the room and push the latest full code so a
+    // gap created while the socket was down is closed on the server immediately.
+    const handleConnect = () => {
+      setConnected(true);
+      if (wasDisconnectedRef.current) {
+        wasDisconnectedRef.current = false;
+        toast.success('Back online', 'Your connection is restored and your work has synced.');
+      }
+      socket.emit('student:join', { sessionId });
+      if (!submittedRef.current) {
+        socket.emit('student:keystroke', {
+          sessionId,
+          type: 'resync',
+          data: { fullCode: codeRef.current, language: languageRef.current },
+          ts: Date.now(),
+        });
+      }
+    };
+    const handleDisconnect = () => {
+      wasDisconnectedRef.current = true;
+      setConnected(false);
+      saveDraft(true);
+    };
+    // Browser-level offline fires faster than the socket's own timeout, so we
+    // listen to both and treat either as "you've lost connection".
+    const handleOffline = () => handleDisconnect();
+    const handleOnline = () => { if (socket.connected) handleConnect(); };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
 
     socket.on('session:state', ({ status: s, constraints: c, questions: q }: { status: StatusKind; constraints: Constraints; questions?: string[] }) => {
       setStatus(s);
@@ -281,12 +342,53 @@ export default function StudentIDE() {
     });
 
     return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
       socket.off('session:state');
       socket.off('session:constraints_updated');
       socket.off('session:questions_updated');
       socket.off('student:workspace');
     };
   }, [sessionId, applyEditorContent]);
+
+  // ─── Local draft autosave ─────────────────────────────────────────────────
+  // The socket only persists snapshots every few seconds, so a network cut can
+  // lose whatever was typed since the last successful snapshot. We mirror the
+  // full workspace to localStorage continuously; on reload we restore from it
+  // when it's fresher than what the server has. This survives a dropped
+  // connection, a closed tab, or a browser crash.
+  const submittedRef = useRef(false);
+  useEffect(() => { submittedRef.current = !!submittedAt; }, [submittedAt]);
+
+  const draftKey = sessionId && user ? `oreos_draft_${sessionId}_${user.id}` : null;
+  const draftKeyRef = useRef(draftKey);
+  useEffect(() => { draftKeyRef.current = draftKey; }, [draftKey]);
+  const lastDraftRef = useRef(0);
+
+  const saveDraft = useCallback((force = false) => {
+    const key = draftKeyRef.current;
+    if (!key || submittedRef.current) return;
+    const now = Date.now();
+    if (!force && now - lastDraftRef.current < 1000) return;
+    lastDraftRef.current = now;
+    try {
+      localStorage.setItem(key, JSON.stringify({
+        content: codeRef.current,
+        language: languageRef.current,
+        ts: now,
+      }));
+    } catch {
+      // storage full or disabled — nothing else we can do
+    }
+  }, []);
+
+  const clearDraft = useCallback(() => {
+    const key = draftKeyRef.current;
+    if (!key) return;
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+  }, []);
 
   // ─── Emit keystroke/code event ───────────────────────────────────────────────
   const emitEvent = useCallback((type: string, data: Record<string, unknown> = {}) => {
@@ -299,7 +401,8 @@ export default function StudentIDE() {
     });
     lastSentRef.current = Date.now();
     idleFlaggedRef.current = false;
-  }, [sessionId, language]);
+    saveDraft();
+  }, [sessionId, language, saveDraft]);
 
   const emitFlag = useCallback((type: string, detail?: string) => {
     if (!sessionId) return;
@@ -373,16 +476,26 @@ export default function StudentIDE() {
       emitEventRef.current('cursor', { line: e.position.lineNumber, col: e.position.column });
     });
 
-    editor.onKeyDown((e) => {
-      const key = e.browserEvent.key.toLowerCase();
-      const mod = e.browserEvent.ctrlKey || e.browserEvent.metaKey;
-      // Only flag Ctrl+V (paste from external source). Ctrl+C and Ctrl+X are
-      // normal coding — the paste handler already distinguishes self vs external.
-      if (mod && key === 'v') {
-        emitFlagRef.current('clipboard_shortcut', `Shortcut: ${key.toUpperCase()}`);
-      }
-    });
+    // NOTE: paste detection lives entirely in the document `paste` handler
+    // (`handlePaste`), which is the only place that can see the pasted text and
+    // tell self-paste (rearranging your own code — not flagged) from an external
+    // paste (flagged). We intentionally do NOT flag Ctrl/Cmd+V here, because a
+    // keydown can't tell the two apart and would flag the student for pasting
+    // their own code.
   };
+
+  // ─── Flush the local draft when the tab is hidden or closed ─────────────────
+  // pagehide/visibilitychange are the last reliable moments before the page goes
+  // away (refresh, close, crash-on-navigate), so we force a final save there.
+  useEffect(() => {
+    const flush = () => saveDraft(true);
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flush);
+    };
+  }, [saveDraft]);
 
   // ─── Copy tracking — record what the student copies from within the page ────
   useEffect(() => {
@@ -581,6 +694,8 @@ export default function StudentIDE() {
         content: codeRef.current,
         language,
       });
+      submittedRef.current = true;
+      clearDraft();
       setSubmittedAt(result.submittedAt);
       setShowSubmitModal(false);
       setShowSubmittedSuccess(true);
@@ -593,7 +708,7 @@ export default function StudentIDE() {
     } finally {
       setSubmitting(false);
     }
-  }, [sessionId, submitting, language, emitEvent]);
+  }, [sessionId, submitting, language, emitEvent, clearDraft]);
 
   useEffect(() => {
     if (editorRef.current) {
@@ -702,6 +817,16 @@ export default function StudentIDE() {
 
   return (
     <div className={styles.page}>
+      {!connected && (
+        <div className={styles.offlineBanner}>
+          <span className={styles.offlineDot} />
+          <span>
+            Connection lost — you’re offline. Your work is being saved on this device.
+            Keep this tab open; it will sync automatically when you’re back online.
+          </span>
+        </div>
+      )}
+
       {fullscreenWarning && (
         <div className={styles.warning}>
           <span>⚠ Tab switch detected — flagged for your lecturer.</span>
