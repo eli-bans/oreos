@@ -268,6 +268,67 @@ export default function LecturerSession() {
     toast.success('Downloaded', `${slug}_submission.${ext}`);
   };
 
+  // The set of files representing one student's submission, named as they should
+  // appear inside that student's folder in a bulk zip. Mirrors the per-language
+  // logic in downloadSubmission so single and bulk download stay consistent.
+  const submissionFiles = (student: LiveStudent): { slug: string; files: { name: string; content: string }[] } => {
+    const slug = student.name.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '') || 'student';
+    const code = codeFor(student);
+    const lang = langFor(student) || 'txt';
+    const extByLang: Record<string, string> = {
+      java: 'java', python: 'py', javascript: 'js', typescript: 'ts', cpp: 'cpp', c: 'c',
+    };
+
+    if (lang === 'java') {
+      const ws = parseJavaWorkspace(code || '');
+      const names = ws ? Object.keys(ws.files) : [];
+      if (ws && names.length >= 1) {
+        const files = Object.entries(ws.files).map(([name, source]) => ({ name, content: source }));
+        files.push({
+          name: 'SUBMISSION.txt',
+          content:
+            `Student: ${student.name} <${student.email}>\n` +
+            `Language: Java\n` +
+            `Submitted: ${student.submitted_at ? new Date(student.submitted_at).toISOString() : '(in progress)'}\n` +
+            `Active file at submission: ${ws.active}\n` +
+            `Files: ${names.join(', ')}\n`,
+        });
+        return { slug, files };
+      }
+      return { slug, files: [{ name: 'Main.java', content: code || '' }] };
+    }
+
+    const ext = extByLang[lang] ?? 'txt';
+    return { slug, files: [{ name: `submission.${ext}`, content: code || '' }] };
+  };
+
+  // Bundle every student matching the current filter into one zip, each in their
+  // own `{name}_submission/` folder. Honors the sidebar filter (e.g. "Submitted")
+  // so the lecturer controls who gets exported.
+  const downloadAll = async () => {
+    const targets = filteredStudents;
+    if (targets.length === 0) {
+      toast.info('Nothing to download', 'No students match the current filter.');
+      return;
+    }
+    const zip = new JSZip();
+    const usedSlugs = new Map<string, number>();
+    for (const student of targets) {
+      const { slug, files } = submissionFiles(student);
+      // Disambiguate folders if two students slugify to the same name.
+      const seen = usedSlugs.get(slug) ?? 0;
+      usedSlugs.set(slug, seen + 1);
+      const folderName = seen === 0 ? `${slug}_submission` : `${slug}_${seen + 1}_submission`;
+      const folder = zip.folder(folderName);
+      if (!folder) continue;
+      for (const f of files) folder.file(f.name, f.content);
+    }
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const sessionSlug = session?.name?.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '') || 'session';
+    triggerDownload(blob, `${sessionSlug}_submissions.zip`);
+    toast.success('Downloaded', `${targets.length} submission${targets.length === 1 ? '' : 's'} in ${sessionSlug}_submissions.zip`);
+  };
+
   // For a submitted student, the submissions row is the source of truth; fall
   // back to the live snapshot (`student.code`) only while they're still working.
   const codeFor = (s: LiveStudent) => submissions.get(s.id)?.content ?? s.code;
@@ -342,6 +403,15 @@ export default function LecturerSession() {
         </div>
 
         <div className={styles.headerActions}>
+          {stats.total > 0 && (
+            <button
+              className="btn btn-ghost"
+              onClick={downloadAll}
+              title="Download all listed submissions as a .zip (one folder per student)"
+            >
+              ⬇ Download all
+            </button>
+          )}
           {session.status !== 'ended' && (
             <select
               value={session.constraints.language ?? 'javascript'}
