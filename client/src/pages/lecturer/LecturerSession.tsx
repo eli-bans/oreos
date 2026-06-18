@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import JSZip from 'jszip';
-import { api, Flag, Participant, Session, Submission } from '@/lib/api';
+import { api, BriefMeta, Flag, Participant, Session, Submission } from '@/lib/api';
 import { formatJavaWorkspaceForDisplay, parseJavaWorkspace } from '@/lib/javaWorkspace';
 import { getSocket } from '@/lib/socket';
 import { questionsFromText, questionsToText } from '@/lib/questions';
@@ -38,6 +38,12 @@ function relTime(ts?: number) {
   return new Date(ts).toLocaleDateString();
 }
 
+function formatBytes(n: number) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function LecturerSession() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -55,6 +61,8 @@ export default function LecturerSession() {
   const [questionsText, setQuestionsText] = useState('');
   const [questionsSaving, setQuestionsSaving] = useState(false);
   const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [briefBusy, setBriefBusy] = useState(false);
+  const briefInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef(getSocket());
 
   useEffect(() => {
@@ -159,6 +167,10 @@ export default function LecturerSession() {
       setQuestionsText(questionsToText(questions));
     });
 
+    socket.on('session:brief_updated', (brief: BriefMeta | null) => {
+      setSession(prev => prev ? { ...prev, brief } : prev);
+    });
+
     return () => {
       socket.off('session:participants');
       socket.off('student:joined');
@@ -167,6 +179,7 @@ export default function LecturerSession() {
       socket.off('student:flagged');
       socket.off('session:status_changed');
       socket.off('session:questions_updated');
+      socket.off('session:brief_updated');
       socket.off('student:submitted');
     };
   }, [id]);
@@ -197,6 +210,61 @@ export default function LecturerSession() {
       toast.error('Could not publish', err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setQuestionsSaving(false);
+    }
+  };
+
+  const handleBriefFile = async (file: File) => {
+    if (!id) return;
+    if (file.type !== 'application/pdf') {
+      toast.error('PDF only', 'Please choose a .pdf file.');
+      return;
+    }
+    setBriefBusy(true);
+    try {
+      const meta = await api.uploadBrief(id, file);
+      setSession(prev => prev ? { ...prev, brief: meta } : prev);
+      toast.success('Brief attached', meta.filename);
+    } catch (err: unknown) {
+      toast.error('Upload failed', err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setBriefBusy(false);
+    }
+  };
+
+  const viewBrief = async () => {
+    if (!id) return;
+    try {
+      const blob = await api.getBriefBlob(id);
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Revoke after the new tab has had time to load it.
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err: unknown) {
+      toast.error('Could not open', err instanceof Error ? err.message : 'Unknown error');
+    }
+  };
+
+  const downloadBrief = async () => {
+    if (!id || !session?.brief) return;
+    try {
+      const blob = await api.getBriefBlob(id);
+      triggerDownload(blob, session.brief.filename);
+    } catch (err: unknown) {
+      toast.error('Download failed', err instanceof Error ? err.message : 'Unknown error');
+    }
+  };
+
+  const removeBrief = async () => {
+    if (!id) return;
+    setBriefBusy(true);
+    try {
+      await api.deleteBrief(id);
+      setSession(prev => prev ? { ...prev, brief: null } : prev);
+      toast.info('Brief removed');
+    } catch (err: unknown) {
+      toast.error('Could not remove', err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setBriefBusy(false);
     }
   };
 
@@ -266,6 +334,67 @@ export default function LecturerSession() {
       `${slug}_submission.${ext}`
     );
     toast.success('Downloaded', `${slug}_submission.${ext}`);
+  };
+
+  // The set of files representing one student's submission, named as they should
+  // appear inside that student's folder in a bulk zip. Mirrors the per-language
+  // logic in downloadSubmission so single and bulk download stay consistent.
+  const submissionFiles = (student: LiveStudent): { slug: string; files: { name: string; content: string }[] } => {
+    const slug = student.name.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '') || 'student';
+    const code = codeFor(student);
+    const lang = langFor(student) || 'txt';
+    const extByLang: Record<string, string> = {
+      java: 'java', python: 'py', javascript: 'js', typescript: 'ts', cpp: 'cpp', c: 'c',
+    };
+
+    if (lang === 'java') {
+      const ws = parseJavaWorkspace(code || '');
+      const names = ws ? Object.keys(ws.files) : [];
+      if (ws && names.length >= 1) {
+        const files = Object.entries(ws.files).map(([name, source]) => ({ name, content: source }));
+        files.push({
+          name: 'SUBMISSION.txt',
+          content:
+            `Student: ${student.name} <${student.email}>\n` +
+            `Language: Java\n` +
+            `Submitted: ${student.submitted_at ? new Date(student.submitted_at).toISOString() : '(in progress)'}\n` +
+            `Active file at submission: ${ws.active}\n` +
+            `Files: ${names.join(', ')}\n`,
+        });
+        return { slug, files };
+      }
+      return { slug, files: [{ name: 'Main.java', content: code || '' }] };
+    }
+
+    const ext = extByLang[lang] ?? 'txt';
+    return { slug, files: [{ name: `submission.${ext}`, content: code || '' }] };
+  };
+
+  // Bundle every student matching the current filter into one zip, each in their
+  // own `{name}_submission/` folder. Honors the sidebar filter (e.g. "Submitted")
+  // so the lecturer controls who gets exported.
+  const downloadAll = async () => {
+    const targets = filteredStudents;
+    if (targets.length === 0) {
+      toast.info('Nothing to download', 'No students match the current filter.');
+      return;
+    }
+    const zip = new JSZip();
+    const usedSlugs = new Map<string, number>();
+    for (const student of targets) {
+      const { slug, files } = submissionFiles(student);
+      // Disambiguate folders if two students slugify to the same name.
+      const seen = usedSlugs.get(slug) ?? 0;
+      usedSlugs.set(slug, seen + 1);
+      const folderName = seen === 0 ? `${slug}_submission` : `${slug}_${seen + 1}_submission`;
+      const folder = zip.folder(folderName);
+      if (!folder) continue;
+      for (const f of files) folder.file(f.name, f.content);
+    }
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const sessionSlug = session?.name?.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '') || 'session';
+    triggerDownload(blob, `${sessionSlug}_submissions.zip`);
+    toast.success('Downloaded', `${targets.length} submission${targets.length === 1 ? '' : 's'} in ${sessionSlug}_submissions.zip`);
   };
 
   // For a submitted student, the submissions row is the source of truth; fall
@@ -342,6 +471,15 @@ export default function LecturerSession() {
         </div>
 
         <div className={styles.headerActions}>
+          {stats.total > 0 && (
+            <button
+              className="btn btn-ghost"
+              onClick={downloadAll}
+              title="Download all listed submissions as a .zip (one folder per student)"
+            >
+              ⬇ Download all
+            </button>
+          )}
           {session.status !== 'ended' && (
             <select
               value={session.constraints.language ?? 'javascript'}
@@ -509,8 +647,55 @@ export default function LecturerSession() {
 
           {tab === 'questions' && (
             <div className={styles.questionsPanel}>
+              <div className={styles.briefFile}>
+                <p className={styles.questionsHelp}>
+                  Attach a PDF brief — students read or download the original document in their IDE.
+                </p>
+                {session.brief ? (
+                  <div className={styles.briefCard}>
+                    <div className={styles.briefCardMain}>
+                      <span className={styles.briefIcon} aria-hidden>📄</span>
+                      <div className={styles.briefInfo}>
+                        <span className={styles.briefName} title={session.brief.filename}>{session.brief.filename}</span>
+                        <span className={styles.briefMeta}>
+                          {formatBytes(session.brief.size)} · attached {relTime(session.brief.uploaded_at)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className={styles.briefActions}>
+                      <button className="btn btn-ghost" onClick={viewBrief}>View</button>
+                      <button className="btn btn-ghost" onClick={downloadBrief}>Download</button>
+                      <button className="btn btn-ghost" onClick={() => briefInputRef.current?.click()} disabled={briefBusy}>
+                        {briefBusy ? '…' : 'Replace'}
+                      </button>
+                      <button className="btn btn-ghost" onClick={removeBrief} disabled={briefBusy}>Remove</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    className="btn btn-ghost"
+                    style={{ width: '100%' }}
+                    onClick={() => briefInputRef.current?.click()}
+                    disabled={briefBusy}
+                  >
+                    {briefBusy ? 'Uploading…' : '⬆ Upload PDF brief'}
+                  </button>
+                )}
+                <input
+                  ref={briefInputRef}
+                  type="file"
+                  accept="application/pdf"
+                  hidden
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    e.currentTarget.value = '';
+                    if (f) handleBriefFile(f);
+                  }}
+                />
+                <div className={styles.briefDivider} />
+              </div>
               <p className={styles.questionsHelp}>
-                Write the brief — students see this in their IDE. Separate multiple questions with a blank line.
+                Or type a short brief — students see this in their IDE. Separate multiple questions with a blank line.
               </p>
               <textarea
                 value={questionsText}

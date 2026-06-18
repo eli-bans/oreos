@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor, { OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import { api, Constraints, Session } from '@/lib/api';
+import { api, BriefMeta, Constraints, Session } from '@/lib/api';
 import {
   createDefaultJavaWorkspace,
   javaFilesToApiPayload,
@@ -27,6 +27,12 @@ const LANG_LABEL: Record<string, string> = {
 };
 
 const JAVA_CLASS_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+function formatBytes(n: number) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 type StatusKind = 'waiting' | 'active' | 'ended';
 
@@ -97,6 +103,9 @@ export default function StudentIDE() {
   const [stdinText, setStdinText] = useState('');
   const [showPanel, setShowPanel] = useState(false);
   const [questions, setQuestions] = useState<string[]>([]);
+  const [brief, setBrief] = useState<BriefMeta | null>(null);
+  const [briefViewerUrl, setBriefViewerUrl] = useState<string | null>(null);
+  const [briefLoading, setBriefLoading] = useState(false);
   const [javaWorkspace, setJavaWorkspace] = useState<JavaWorkspace | null>(null);
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -222,6 +231,7 @@ export default function StudentIDE() {
         setStatus(s.status);
         setConstraints(s.constraints);
         setQuestions(s.questions ?? []);
+        setBrief(s.brief ?? null);
         if (workspace.submittedAt) setSubmittedAt(workspace.submittedAt);
 
         let lang = workspace.language || s.constraints.language || 'javascript';
@@ -310,10 +320,11 @@ export default function StudentIDE() {
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
 
-    socket.on('session:state', ({ status: s, constraints: c, questions: q }: { status: StatusKind; constraints: Constraints; questions?: string[] }) => {
+    socket.on('session:state', ({ status: s, constraints: c, questions: q, brief: b }: { status: StatusKind; constraints: Constraints; questions?: string[]; brief?: BriefMeta | null }) => {
       setStatus(s);
       setConstraints(c);
       if (q) setQuestions(q);
+      if (b !== undefined) setBrief(b);
       if (c.language) setLanguage(c.language);
       if (s === 'ended') setSessionEnded(true);
     });
@@ -325,6 +336,10 @@ export default function StudentIDE() {
 
     socket.on('session:questions_updated', (q: string[]) => {
       setQuestions(q);
+    });
+
+    socket.on('session:brief_updated', (b: BriefMeta | null) => {
+      setBrief(b);
     });
 
     socket.on('student:workspace', ({ content, language: lang }: { content: string; language: string }) => {
@@ -349,9 +364,51 @@ export default function StudentIDE() {
       socket.off('session:state');
       socket.off('session:constraints_updated');
       socket.off('session:questions_updated');
+      socket.off('session:brief_updated');
       socket.off('student:workspace');
     };
   }, [sessionId, applyEditorContent]);
+
+  // ─── Brief PDF viewer ──────────────────────────────────────────────────────
+  // The bytes are fetched over an authenticated request and rendered from a blob
+  // URL, so the bearer token never has to ride along in an <iframe> src.
+  const openBriefViewer = async () => {
+    if (!sessionId || briefLoading) return;
+    setBriefLoading(true);
+    try {
+      const blob = await api.getBriefBlob(sessionId);
+      setBriefViewerUrl(URL.createObjectURL(blob));
+    } catch {
+      toast.error('Could not open brief', 'Try downloading it instead.');
+    } finally {
+      setBriefLoading(false);
+    }
+  };
+
+  const closeBriefViewer = () => {
+    setBriefViewerUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  };
+
+  const downloadBrief = async () => {
+    if (!sessionId || !brief) return;
+    try {
+      const blob = await api.getBriefBlob(sessionId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = brief.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Download failed', 'Please try again.');
+    }
+  };
+
+  // Revoke any open blob URL when leaving the page.
+  useEffect(() => () => { if (briefViewerUrl) URL.revokeObjectURL(briefViewerUrl); }, [briefViewerUrl]);
 
   // ─── Local draft autosave ─────────────────────────────────────────────────
   // The socket only persists snapshots every few seconds, so a network cut can
@@ -933,9 +990,26 @@ export default function StudentIDE() {
       )}
 
       <div className={styles.workspace}>
-        {questions.length > 0 && (
+        {(questions.length > 0 || brief) && (
           <aside className={styles.questionsPanel}>
             <div className={styles.panelKicker}>Brief</div>
+            {brief && (
+              <div className={styles.briefCard}>
+                <div className={styles.briefCardMain}>
+                  <span className={styles.briefIcon} aria-hidden>📄</span>
+                  <div className={styles.briefInfo}>
+                    <span className={styles.briefName} title={brief.filename}>{brief.filename}</span>
+                    <span className={styles.briefMeta}>PDF · {formatBytes(brief.size)}</span>
+                  </div>
+                </div>
+                <div className={styles.briefActions}>
+                  <button type="button" className={styles.briefBtn} onClick={openBriefViewer} disabled={briefLoading}>
+                    {briefLoading ? 'Opening…' : 'View'}
+                  </button>
+                  <button type="button" className={styles.briefBtn} onClick={downloadBrief}>Download</button>
+                </div>
+              </div>
+            )}
             {questions.map((q, i) => (
               <div key={i} className={styles.questionItem}>
                 <span className={styles.questionNum}>Question {i + 1}</span>
@@ -1177,6 +1251,22 @@ export default function StudentIDE() {
                 Back to lobby
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Brief PDF viewer ───────────────────────────────────────────────── */}
+      {briefViewerUrl && (
+        <div className={styles.briefOverlay} onClick={closeBriefViewer}>
+          <div className={styles.briefModal} onClick={e => e.stopPropagation()}>
+            <div className={styles.briefModalHeader}>
+              <span className={styles.briefModalTitle}>{brief?.filename ?? 'Brief'}</span>
+              <div className={styles.briefModalActions}>
+                <button type="button" className="btn btn-ghost" onClick={downloadBrief}>Download</button>
+                <button type="button" className={styles.briefModalClose} onClick={closeBriefViewer} aria-label="Close brief">×</button>
+              </div>
+            </div>
+            <iframe className={styles.briefFrame} src={briefViewerUrl} title={brief?.filename ?? 'Brief'} />
           </div>
         </div>
       )}

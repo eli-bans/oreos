@@ -1,8 +1,19 @@
 const router = require('express').Router();
+const multer = require('multer');
 const { v4: uuid } = require('uuid');
 const db = require('../db/schema');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { parseQuestions, parseSessionRow } = require('../sessionUtils');
+
+// Brief uploads are held in memory (≤10MB) then written to SQLite as a BLOB.
+const briefUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') return cb(null, true);
+    cb(new Error('Only PDF files are allowed'));
+  },
+});
 
 function normalizeQuestions(input) {
   if (!input) return [];
@@ -176,6 +187,63 @@ router.get('/:id/submissions', requireAuth, requireRole('lecturer'), (req, res) 
     WHERE s.session_id = ? ORDER BY s.ts DESC
   `).all(req.params.id);
   res.json(rows);
+});
+
+// Lecturer: upload / replace the brief PDF for a session
+router.post('/:id/brief', requireAuth, requireRole('lecturer'), (req, res) => {
+  const session = db.prepare('SELECT id FROM sessions WHERE id = ? AND lecturer_id = ?')
+    .get(req.params.id, req.user.id);
+  if (!session) return res.status(404).json({ error: 'Not found' });
+
+  // Run multer only after ownership is confirmed so we don't buffer uploads for
+  // requests that aren't allowed to write here.
+  briefUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const uploadedAt = Date.now();
+    db.prepare(`
+      INSERT INTO session_briefs (session_id, filename, mime, size, data, uploaded_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        filename = excluded.filename, mime = excluded.mime,
+        size = excluded.size, data = excluded.data, uploaded_at = excluded.uploaded_at
+    `).run(req.params.id, req.file.originalname, req.file.mimetype, req.file.size, req.file.buffer, uploadedAt);
+
+    const meta = { filename: req.file.originalname, mime: req.file.mimetype, size: req.file.size, uploaded_at: uploadedAt };
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`session:${req.params.id}`).emit('session:brief_updated', meta);
+      io.to(`lecturer:${req.params.id}`).emit('session:brief_updated', meta);
+    }
+    res.json(meta);
+  });
+});
+
+// Anyone authenticated: fetch the brief PDF bytes (the client pulls this over an
+// authenticated request and renders it from a blob URL).
+router.get('/:id/brief', requireAuth, (req, res) => {
+  const row = db.prepare('SELECT filename, mime, size, data FROM session_briefs WHERE session_id = ?')
+    .get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'No brief' });
+  res.setHeader('Content-Type', row.mime || 'application/pdf');
+  res.setHeader('Content-Length', row.size);
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.filename)}"`);
+  res.send(row.data);
+});
+
+// Lecturer: remove the brief
+router.delete('/:id/brief', requireAuth, requireRole('lecturer'), (req, res) => {
+  const session = db.prepare('SELECT id FROM sessions WHERE id = ? AND lecturer_id = ?')
+    .get(req.params.id, req.user.id);
+  if (!session) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM session_briefs WHERE session_id = ?').run(req.params.id);
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`session:${req.params.id}`).emit('session:brief_updated', null);
+    io.to(`lecturer:${req.params.id}`).emit('session:brief_updated', null);
+  }
+  res.json({ ok: true });
 });
 
 // Get single session

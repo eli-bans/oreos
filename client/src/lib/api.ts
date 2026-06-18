@@ -52,6 +52,35 @@ export const api = {
   getSubmissions: (sessionId: string) =>
     request<Submission[]>(`/sessions/${sessionId}/submissions`),
 
+  // Brief PDF attachment. Upload uses multipart, so it bypasses the JSON
+  // `request` helper; the fetched bytes are returned as a Blob for the client to
+  // render from an object URL (keeps the bearer-token auth intact).
+  uploadBrief: async (sessionId: string, file: File): Promise<BriefMeta> => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${BASE}/sessions/${sessionId}/brief`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: form,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Upload failed');
+    return data as BriefMeta;
+  },
+
+  deleteBrief: (sessionId: string) =>
+    request<{ ok: boolean }>(`/sessions/${sessionId}/brief`, { method: 'DELETE' }),
+
+  getBriefBlob: async (sessionId: string): Promise<Blob> => {
+    const token = getToken();
+    const res = await fetch(`${BASE}/sessions/${sessionId}/brief`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!res.ok) throw new Error('Could not load brief');
+    return res.blob();
+  },
+
   updateSession: (id: string, body: Partial<{ status: string; constraints: Constraints; questions: string[] }>) =>
     request<Session>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
@@ -122,6 +151,13 @@ export interface Constraints {
   timeLimit?: number; // seconds
 }
 
+export interface BriefMeta {
+  filename: string;
+  mime: string;
+  size: number;
+  uploaded_at: number;
+}
+
 export interface Session {
   id: string;
   name: string;
@@ -130,6 +166,7 @@ export interface Session {
   status: 'waiting' | 'active' | 'ended';
   constraints: Constraints;
   questions: string[];
+  brief?: BriefMeta | null;
   created_at: number;
   started_at?: number;
   ended_at?: number;

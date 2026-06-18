@@ -86,4 +86,17 @@ try {
   // column already exists
 }
 
+// Brief attachment (e.g. a problem-set PDF). One file per session, stored as a
+// BLOB so it travels with the DB — no filesystem paths or orphaned files.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS session_briefs (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+    filename TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    uploaded_at INTEGER NOT NULL
+  );
+`);
+
 module.exports = db;
