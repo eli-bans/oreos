@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuid } = require('uuid');
 const db = require('../db/schema');
 const { JWT_SECRET } = require('../middleware/auth');
-const { parseSessionRow } = require('../sessionUtils');
+const { parseSessionRow, getBriefMeta } = require('../sessionUtils');
 
 const SNAPSHOT_INTERVAL_MS = 5000;
 
@@ -50,6 +50,7 @@ module.exports = function attachSockets(io) {
         status: parsed.status,
         constraints: parsed.constraints,
         questions: parsed.questions,
+        brief: parsed.brief,
       });
 
       const snap = db.prepare(`
@@ -186,6 +187,7 @@ module.exports = function attachSockets(io) {
         status: parsed.status,
         constraints: parsed.constraints,
         questions: parsed.questions,
+        brief: parsed.brief,
       });
       io.to(`lecturer:${sessionId}`).emit('session:status_changed', { status });
     });

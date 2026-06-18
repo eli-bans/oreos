@@ -276,6 +276,32 @@
 }
 .questionsPanel { gap: 10px; padding: 14px; }
 .questionsHelp { font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
+
+.briefFile { display: flex; flex-direction: column; gap: 10px; }
+.briefCard {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.briefCardMain { display: flex; align-items: flex-start; gap: 10px; }
+.briefIcon { font-size: 20px; line-height: 1; }
+.briefInfo { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.briefName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.briefMeta { font-size: 11px; color: var(--text-3); }
+.briefActions { display: flex; flex-wrap: wrap; gap: 6px; }
+.briefActions button { padding: 5px 10px; font-size: 12px; }
+.briefDivider { height: 1px; background: var(--border); margin: 4px 0 2px; }
 .questionsInput {
   width: 100%;
   min-height: 220px;
